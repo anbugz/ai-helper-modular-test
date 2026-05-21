@@ -173,7 +173,8 @@ def format_calculation_fallback(
                 rub_part = fee_display.split("→")[0].strip()
                 fee_str += f" ({rub_part} → {fee_in_cur:,.2f} {currency})"
             fee_label = "РАДИОСБОР" if is_radio else "Сбор"
-            lines.append(f"⚡ {fee_label}:{'':>22 - len(fee_label) + 4} {fee_str}")
+            padding = 22 - len(fee_label)
+            lines.append(f"⚡ {fee_label}:{'':>{padding}} {fee_str}")
         
         lines.append("—" * 35)
         
