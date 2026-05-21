@@ -1,6 +1,8 @@
 """
 config.py — константы, ENV-переменные, logger, SYSTEM_PROMPT.
 """
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import re
 import logging
