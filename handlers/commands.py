@@ -50,9 +50,7 @@ async def cmd_start(message: Message):
 async def cmd_help(message: Message):
     await message.answer(HELP_MSG)
 
-@dp.message(Command("clear"))
-async def cmd_clear(message: Message):
-    await message.answer("═══════════ 🧹 ИСТОРИЯ ЧАТА ОЧИЩЕНА ═══════════")
+
 
 # Функция-заглушка для совместимости с main.py
 async def register_commands(dp):
