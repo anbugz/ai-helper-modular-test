@@ -1,11 +1,13 @@
 """
 handlers/commands.py — базовые команды бота (/start, /help, /clear)
+Регистрируются через side-effect импорта (@dp.message).
 """
 from aiogram import types
 from aiogram.types import Message
+from aiogram.filters import Command
 from config import VERSION
 from database import get_dialog_history
-from bot_instance import bot
+from bot_instance import dp, bot
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,17 +41,21 @@ HELP_MSG = (
     "<b>🧹 /clear</b> — очистить чат (визуально)\n"
 )
 
+# Регистрация через side-effect (хэндлеры привязываются при импорте)
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(START_MSG)
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(HELP_MSG)
+
+@dp.message(Command("clear"))
+async def cmd_clear(message: Message):
+    await message.answer("═══════════ 🧹 ИСТОРИЯ ЧАТА ОЧИЩЕНА ═══════════")
+
+# Функция-заглушка для совместимости с main.py
 async def register_commands(dp):
-    """Регистрация базовых команд."""
-    
-    @dp.message(commands=["start"])
-    async def cmd_start(message: Message):
-        await message.answer(START_MSG)
-    
-    @dp.message(commands=["help"])
-    async def cmd_help(message: Message):
-        await message.answer(HELP_MSG)
-    
-    @dp.message(commands=["clear"])
-    async def cmd_clear(message: Message):
-        await message.answer("═══════════ 🧹 ИСТОРИЯ ЧАТА ОЧИЩЕНА ═══════════")
+    """Команды уже зарегистрированы через @dp.message выше."""
+    logger.debug("Commands already registered via @dp.message decorators")
+    pass
