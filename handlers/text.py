@@ -9,7 +9,7 @@ from config import ADMIN_ID, logger
 from services.security import full_security_scan, is_blocked, contains_pii, redact_pii
 from services.tnved import search_tnved, is_radio_electronics
 from services.ai import ask_deepseek
-from database import save_message, check_rate_limit
+from database import save_message
 import re
 
 @dp.message(F.text)
