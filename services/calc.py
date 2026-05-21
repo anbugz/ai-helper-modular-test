@@ -89,7 +89,7 @@ def format_calculation_fallback(
     # Сбор в рублях (как в старом боте)
     if customs_fee_rub:
         if is_radio:
-            lines.append(f"⚡ <b>Сбор:</b> {customs_fee_rub:,.0f} ₽ (фиксированный для радиоэлектроники)")
+            lines.append(f"⚡ <b>РАДИОСБОР:</b> {customs_fee_rub:,.0f} ₽ (фиксированный)")
         else:
             lines.append(f"⚡ <b>Сбор:</b> {customs_fee_rub:,.0f} ₽ (по шкале ПП РФ №1637)")
     
@@ -172,7 +172,8 @@ def format_calculation_fallback(
             if "→" in fee_display:
                 rub_part = fee_display.split("→")[0].strip()
                 fee_str += f" ({rub_part} → {fee_in_cur:,.2f} {currency})"
-            lines.append(f"⚡ Сбор:{'':>22} {fee_str}")
+            fee_label = "РАДИОСБОР" if is_radio else "Сбор"
+            lines.append(f"⚡ {fee_label}:{'':>22 - len(fee_label) + 4} {fee_str}")
         
         lines.append("—" * 35)
         

@@ -123,6 +123,9 @@ def is_radio_electronics(code: str) -> bool:
     if not code:
         return False
     c = code.replace(" ", "").replace(".", "").strip()
+    # Группа 85 (телефоны, смартфоны) — всегда радиоэлектроника
+    if len(c) >= 2 and c[:2] == "85":
+        return True
     if len(c) >= 2 and c[:2] not in _RADIO_GROUPS:
         return False
     for pattern in RADIO_ELECTRONICS_CODES_SET:

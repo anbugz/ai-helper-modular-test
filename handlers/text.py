@@ -38,7 +38,7 @@ from services.tnved import (
     is_radio_electronics, extract_tnved_codes,
     get_tnved_from_cache, calculate_customs_fee,
 )
-from services.currency import get_cbr_rates, format_cross_rates, convert_fee_to_currency, detect_base_currency
+from services.currency import get_cbr_rates, format_cross_rates, convert_fee_to_currency
 from services.ai import ask_deepseek, build_messages
 from services.calc import format_calculation_fallback, strip_ai_assistant_junk
 from utils.telegram import safe_send, check_rate_limit
@@ -399,15 +399,17 @@ async def handle_text(message: Message):
             if any(w in info["name"].lower() for w in ("пищев", "детск", "медиц", "книг", "печат"))
             else "22%"
         )
+        name_clean = info["name"].replace("🠺", "→").replace("🠔", "←")
         radio = (
             "\n\n⚡ <b>РАДИОСБОР:</b> 73 860 ₽ (фиксированный)\n"
             "   <i>По Приложению №1 к ПП РФ №1637</i>"
             if any(is_radio_electronics(c) for c in codes)
             else ""
         )
-        await message.answer(
+        await safe_send(
+            message,
             f"📋 <code>{info['code']}</code>\n"
-            f"🔧 {info['name']}\n"
+            f"🔧 {name_clean}\n"
             f"💰 Пошлина: {info['tariff']} — {duty_type}\n"
             f"🧾 НДС: {vat}"
             f"{radio}"
@@ -682,6 +684,7 @@ async def handle_text(message: Message):
             pt = info["parsed_tariff"]
             header = f"📋 <code>{info['code']}</code>\n"
             name_clean = re.sub(r"\s*\(за исключением[^)]+", "", info["name"]).strip()
+            name_clean = name_clean.replace("🠺", "→").replace("🠔", "←")
             full_name = TNVED_FULL_NAMES.get(info["code"][:6], name_clean)
             header += f"🔧 {full_name}\n"
             header += f"💰 <b>Пошлина:</b> {info['tariff']}"
