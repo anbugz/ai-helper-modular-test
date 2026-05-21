@@ -1,3 +1,4 @@
-aiogram>=3.7.0
-httpx
-openai
+aiogram>=3.0.0
+openai>=1.0.0
+httpx>=0.25.0
+python-dotenv>=1.0.0

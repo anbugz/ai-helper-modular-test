@@ -1,28 +1,24 @@
 """
-services/stt.py — Speech-to-Text через Deepgram API.
+services/stt.py — Deepgram API (speech-to-text).
 """
-import os
-import logging
 import httpx
+from typing import Optional
+from config import DEEPGRAM_API_KEY, logger
 
-logger = logging.getLogger(__name__)
 
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-
-async def speech_to_text(audio_path: str) -> str:
+def speech_to_text(audio_path: str) -> Optional[str]:
     """
-    Распознавание речи через Deepgram API (~2-3 сек).
-    
+    Распознавание речи через Deepgram API.
+
     Args:
         audio_path: путь к аудио-файлу (.ogg, .mp3, .wav)
-    
+
     Returns:
-        Распознанный текст или пустая строка при ошибке
+        Распознанный текст или None при ошибке
     """
     if not DEEPGRAM_API_KEY:
-        logger.error("DEEPGRAM_API_KEY не задан")
-        return ""
-    
+        logger.error("DEEPGRAM_API_KEY не задан в .env")
+        return None
     try:
         with open(audio_path, "rb") as f:
             response = httpx.post(
@@ -36,14 +32,14 @@ async def speech_to_text(audio_path: str) -> str:
                 content=f.read(),
                 timeout=15.0,
             )
-        
         if response.status_code == 200:
             result = response.json()
             transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
-            return transcript.strip()
+            text = transcript.strip()
+            return text if text else None
         else:
             logger.error(f"Deepgram HTTP {response.status_code}: {response.text[:200]}")
-            return ""
+            return None
     except Exception as e:
         logger.error(f"Deepgram ошибка: {e}")
-        return ""
+        return None

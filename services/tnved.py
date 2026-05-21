@@ -1,36 +1,218 @@
 """
-services/tnved.py — работа с ТН ВЭД.
-TODO: перенести из tnved_engine.py
+services/tnved.py — кэш данных ТН ВЭД, поиск, проверка радиоэлектроники.
+Полный перенос из tnved_engine.py.
 """
-import logging
-from typing import List, Dict, Any, Optional
+import re
+from typing import List, Dict, Optional
+from config import RADIO_ELECTRONICS_CODES_SET, _RADIO_GROUPS, TNVED_FULL_NAMES, logger
+from database import save_tnved_batch, get_tnved_from_db, get_all_tnved_from_db
 
-logger = logging.getLogger(__name__)
+# ------------------------------------------------------------------
+# Кэш (в памяти, не в SQLite)
+# ------------------------------------------------------------------
+_TNVED_ROWS_CACHE: List[List[str]] = []
+_TNVED_INDEX: Dict[str, int] = {}  # code -> row_index
 
-# TODO: перенести кэш, поиск, радиоэлектроника из tnved_engine.py
 
-RADIO_CODES = {
-    "8471", "8517", "8521", "8525", "8527", "8528", "8529",
-    "8530", "8531", "8532", "8533", "8534", "8535", "8536",
-    "8537", "8538", "8539", "8540", "8541", "8542", "8543",
-    "8544", "8545", "8546", "8547", "8548", "8549", "9006",
-    "9007", "9008", "9009", "9010", "9011", "9012", "9013",
-    "9014", "9015", "9016", "9017", "9018", "9019", "9020",
-    "9021", "9022", "9023", "9024", "9025", "9026", "9027",
-    "9028", "9029", "9030", "9031", "9032", "9033",
-}
+def _build_tnved_index(rows: List[List[str]]) -> None:
+    """Строит индекс для быстрого поиска кодов ТН ВЭД."""
+    global _TNVED_INDEX
+    _TNVED_INDEX = {}
+    for i, row in enumerate(rows):
+        if not row or not isinstance(row[0], str):
+            continue
+        code = row[0].replace(" ", "").strip()
+        if len(code) >= 6 and code.isdigit():
+            _TNVED_INDEX[code] = i
+
+
+def load_tnved_rows(rows: List[List[str]], persist: bool = True) -> None:
+    """Загружает строки ТН ВЭД в кэш, строит индекс, сохраняет в SQLite, заполняет TNVED_FULL_NAMES."""
+    global _TNVED_ROWS_CACHE
+    _TNVED_ROWS_CACHE = [r for r in rows if r and any(str(c).strip() for c in r)]
+    _build_tnved_index(_TNVED_ROWS_CACHE)
+    # Заполняем полные наименования из загруженных данных
+    TNVED_FULL_NAMES.clear()
+    for row in _TNVED_ROWS_CACHE:
+        if not row or not isinstance(row[0], str):
+            continue
+        code = row[0].replace(" ", "").strip()
+        name = row[1] if len(row) > 1 else ""
+        if len(code) >= 6 and code.isdigit() and name:
+            prefix = code[:6]
+            # Сохраняем самое длинное наименование для префикса
+            if prefix not in TNVED_FULL_NAMES or len(name) > len(TNVED_FULL_NAMES[prefix]):
+                TNVED_FULL_NAMES[prefix] = name
+    logger.info(
+        f"TNVED кэш: {len(_TNVED_ROWS_CACHE)} строк, {len(_TNVED_INDEX)} кодов, "
+        f"{len(TNVED_FULL_NAMES)} полных наименований"
+    )
+    if persist:
+        # Импорт парсера тарифов — локально, чтобы избежать циклических импортов
+        try:
+            from parsers import parse_tnved_tariff
+            parsed_rows = [
+                parse_tnved_tariff(row[2] if len(row) > 2 else "") for row in _TNVED_ROWS_CACHE
+            ]
+            save_tnved_batch(_TNVED_ROWS_CACHE, parsed_rows)
+        except ImportError:
+            logger.warning("parsers.parse_tnved_tariff не найден — кэш в памяти без сохранения в БД")
+
+
+def restore_tnved_from_db() -> bool:
+    """Восстанавливает кэш ТН ВЭД из SQLite при старте бота, включая полные наименования."""
+    global _TNVED_ROWS_CACHE
+    rows = get_all_tnved_from_db()
+    if not rows:
+        logger.info("TNVED кэш в БД пуст — жду загрузки .xlsx")
+        return False
+    _TNVED_ROWS_CACHE = rows
+    _build_tnved_index(_TNVED_ROWS_CACHE)
+    # Восстанавливаем полные наименования
+    TNVED_FULL_NAMES.clear()
+    for row in rows:
+        if not row or not isinstance(row[0], str):
+            continue
+        code = row[0].replace(" ", "").strip()
+        name = row[1] if len(row) > 1 else ""
+        if len(code) >= 6 and code.isdigit() and name:
+            prefix = code[:6]
+            if prefix not in TNVED_FULL_NAMES or len(name) > len(TNVED_FULL_NAMES[prefix]):
+                TNVED_FULL_NAMES[prefix] = name
+    logger.info(
+        f"TNVED кэш восстановлен из БД: {len(_TNVED_ROWS_CACHE)} строк, "
+        f"{len(TNVED_FULL_NAMES)} полных наименований"
+    )
+    return True
+
+
+def get_tnved_from_cache(code: str) -> Optional[dict]:
+    """Быстрый поиск кода ТН ВЭД: сначала память (O(1)), потом SQLite."""
+    if not code:
+        return None
+    if _TNVED_INDEX:
+        search_code = code.replace(" ", "").replace(".", "").strip()
+        idx = _TNVED_INDEX.get(search_code)
+        if idx is not None and idx < len(_TNVED_ROWS_CACHE):
+            return _row_to_tnved_dict(_TNVED_ROWS_CACHE[idx])
+        if len(search_code) >= 6:
+            for full_code, i in _TNVED_INDEX.items():
+                if full_code.startswith(search_code) and i < len(_TNVED_ROWS_CACHE):
+                    return _row_to_tnved_dict(_TNVED_ROWS_CACHE[i])
+    return get_tnved_from_db(code)
+
+
+def _row_to_tnved_dict(row: List[str]) -> dict:
+    """Преобразует строку Excel в словарь с данными ТН ВЭД."""
+    tariff = row[2] if len(row) > 2 else ""
+    # Локальный импорт для избежания цикла
+    try:
+        from parsers import parse_tnved_tariff
+        parsed = parse_tnved_tariff(tariff)
+    except ImportError:
+        parsed = {"type": "", "formula": "", "value": 0}
+    return {
+        "code": row[0] if row else "",
+        "name": row[1] if len(row) > 1 else "",
+        "tariff": tariff,
+        "parsed_tariff": parsed,
+        "has_euro_component": parsed.get("type") in ("min", "plus", "fixed_eur"),
+        "needs_weight": parsed.get("type") in ("min", "plus", "fixed_eur"),
+    }
+
+
+# ------------------------------------------------------------------
+# Радиоэлектроника
+# ------------------------------------------------------------------
 
 def is_radio_electronics(code: str) -> bool:
-    """Проверяет, относится ли код к радиоэлектронике."""
-    prefix = code[:4] if len(code) >= 4 else code
-    return prefix in RADIO_CODES
+    """Проверяет по списку + по первым 2 цифрам группы.
+    Для коротких шаблонов (≤9 цифр) — startswith (группы/подгруппы).
+    Для длинных шаблонов (≥10 цифр) — точное совпадение (полные коды).
+    """
+    if not code:
+        return False
+    c = code.replace(" ", "").replace(".", "").strip()
+    if len(c) >= 2 and c[:2] not in _RADIO_GROUPS:
+        return False
+    for pattern in RADIO_ELECTRONICS_CODES_SET:
+        if len(pattern) <= 9:
+            # Короткие паттерны (4-9 знаков) = группа/подгруппа/позиция → startswith
+            if c.startswith(pattern):
+                return True
+        else:
+            # 10-значные паттерны = конкретный товар → точное совпадение
+            if c == pattern:
+                return True
+    return False
 
 
-def search_tnved(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+# ------------------------------------------------------------------
+# Извлечение кодов из текста
+# ------------------------------------------------------------------
+
+def extract_tnved_codes(text: str) -> List[str]:
+    """Извлекает коды ТН ВЭД (8-10 цифр) из текста, включая с пробелами (5208 43 000 0)."""
+    # Нормализуем: убираем пробелы между цифрами
+    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
+    return re.findall(r"\d{8,10}", normalized)
+
+
+# ------------------------------------------------------------------
+# Таможенный сбор по шкале
+# ------------------------------------------------------------------
+
+def calculate_customs_fee(value_rub: float) -> int:
+    """Рассчитывает таможенный сбор по шкале ПП РФ №1637."""
+    from config import CUSTOMS_FEE_RUB, RADIO_FEE
+    
+    for threshold, fee in sorted(CUSTOMS_FEE_RUB.items()):
+        if value_rub <= threshold:
+            return fee
+    return RADIO_FEE
+
+
+# ------------------------------------------------------------------
+# Парсинг тарифа (fallback если parsers.py недоступен)
+# ------------------------------------------------------------------
+
+def parse_tnved_tariff(tariff_str: str) -> dict:
+    """Парсит строку тарифа ТН ВЭД в структурированный формат.
+    
+    Returns:
+        {"type": "percent"/"min"/"plus"/"fixed_eur"/"", 
+         "formula": "оригинальная строка",
+         "value": числовое значение для percent}
     """
-    Поиск кода ТН ВЭД по запросу.
-    TODO: полная реализация из tnved_engine.py
-    """
-    # TODO: подключить кэш БД, fuzzy search, MATERIAL_MAP
-    logger.info(f"TNVED search: {query}")
-    return []
+    t = (tariff_str or "").strip().lower()
+    if not t:
+        return {"type": "", "formula": "", "value": 0}
+    
+    # Процент: "15%", "5 %"
+    pct_match = re.search(r'(\d+(?:[.,]\d+)?)\s*%', t)
+    if pct_match:
+        try:
+            val = float(pct_match.group(1).replace(',', '.'))
+            return {"type": "percent", "formula": tariff_str, "value": val}
+        except ValueError:
+            pass
+    
+    # Комбинированный: "15%, но не менее 0,2 евро/кг"
+    if "не менее" in t or "но менее" in t:
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
+        return {"type": "min", "formula": tariff_str, "value": eur_val}
+    
+    # Комбинированный с плюсом: "10% + 0,5 евро/кг"
+    if "+" in t and "евро" in t:
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
+        return {"type": "plus", "formula": tariff_str, "value": eur_val}
+    
+    # Фиксированный евро: "0,3 евро/кг"
+    if "евро" in t:
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
+        return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
+    
+    return {"type": "", "formula": tariff_str, "value": 0}

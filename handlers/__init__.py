@@ -1,13 +1,6 @@
 """
-handlers/ — обработчики Telegram сообщений.
-
-text, voice, documents регистрируются через side-effect импорта (@dp.message).
+handlers — регистрация всех хэндлеров aiogram.
 """
-from .commands import register_commands
-from .admin import register_admin
-# text, voice, documents импортируются в main.py для регистрации хэндлеров
+from handlers import commands, admin, documents, voice, text
 
-__all__ = [
-    "register_commands",
-    "register_admin",
-]
+__all__ = ["commands", "admin", "documents", "voice", "text"]

@@ -1,133 +1,172 @@
 """
-services/calc.py — расчёт таможенных платежей.
-Вынесено из calc_engine.py — только core-логика.
+services/calc.py — расчёт ВЭД-платежей, форматирование ответа.
 """
-import logging
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, Optional
+from config import RADIO_FEE, logger
+from services.currency import convert_fee_to_currency
 
-logger = logging.getLogger(__name__)
 
-# Шкала таможенного сбора (ПП РФ №1637)
-FEE_BRACKETS = [
-    (200_000, 1_231),
-    (450_000, 2_462),
-    (1_200_000, 4_924),
-    (2_700_000, 13_541),
-    (4_200_000, 18_465),
-    (5_500_000, 21_344),
-    (10_000_000, 49_240),
-]
+def _strip_deepseek_dup(text: str) -> str:
+    """Удаляет дублирование ответов DeepSeek (когда модель повторяет свой ответ)."""
+    lines = text.split("\n")
+    seen = set()
+    result = []
+    for line in lines:
+        key = line.strip().lower()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        result.append(line)
+    return "\n".join(result)
 
-RADIO_FEE = 73_860  # радиосбор фиксированный
 
-def calculate_customs(
-    ts: float,
-    rate: float,
-    duty_type: str,
-    duty_eur: float,
+def _strip_ai_assistant_junk(text: str) -> str:
+    """Очищает ответ от markdown-таблиц и служебных фраз."""
+    # Удаляем markdown-таблицы
+    lines = text.split("\n")
+    clean_lines = []
+    in_table = False
+    for line in lines:
+        if "|" in line and "---" in line:
+            in_table = True
+            continue
+        if in_table and "|" in line:
+            continue
+        if in_table and "|" not in line:
+            in_table = False
+        clean_lines.append(line)
+    
+    text = "\n".join(clean_lines)
+    
+    # Удаляем приписки от AI
+    junk_phrases = [
+        r"As an AI.*?(\n|$)",
+        r"Я — искусственный интеллект.*?(\n|$)",
+        r"I apologize, but.*?(\n|$)",
+        r"Прошу прощения.*?(\n|$)",
+    ]
+    for phrase in junk_phrases:
+        text = re.sub(phrase, "", text, flags=re.IGNORECASE)
+    
+    return text.strip()
+
+
+def format_calculation_fallback(
+    code: str,
+    name: str,
+    currency: str,
+    rates: Dict[str, str],
+    tariff_info: Optional[Dict],
+    is_radio: bool,
+    customs_fee_rub: float,
     vat_rate: float,
-    radio: bool,
-    eur_rate: float,
+    ts_fallback: float,
+    ts_components: Dict,
     weight_kg: Optional[float] = None,
-    currency: str = "USD"
-) -> Dict[str, Any]:
+) -> str:
     """
-    Расчёт таможенных платежей.
+    Форматирует ВЭД-расчёт в виде чистого текстового ответа.
     
     Args:
-        ts: таможенная стоимость (в валюте инвойса)
-        rate: ставка пошлины (%)
-        duty_type: тип тарифа (ad_valorem, min, plus, fixed_eur)
-        duty_eur: EUR/кг компонента
-        vat_rate: НДС (%)
-        radio: радиоэлектроника (True/False)
-        eur_rate: курс EUR к валюте инвойса
-        weight_kg: вес в кг (для fixed_eur/min/plus)
-        currency: валюта инвойса
+        code: Код ТН ВЭД
+        name: Наименование товара
+        currency: Валюта инвойса (CNY/USD/EUR/RUB)
+        rates: Курсы ЦБ
+        tariff_info: Информация о тарифе
+        is_radio: Радиоэлектроника
+        customs_fee_rub: Таможенный сбор в рублях
+        vat_rate: Ставка НДС (0.22 или 0.10)
+        ts_fallback: Таможенная стоимость
+        ts_components: Компоненты ТС
+        weight_kg: Вес в кг
     
     Returns:
-        dict с breakdown по каждому платежу
+        Форматированный текст расчёта
     """
-    result = {
-        "ts": ts,
-        "currency": currency,
-        "duty": 0.0,
-        "duty_detail": "",
-        "vat": 0.0,
-        "vat_rate": vat_rate,
-        "fee": 0.0,
-        "radio_fee": RADIO_FEE if radio else 0,
-        "total": 0.0,
-    }
+    lines = []
     
-    # 1. Пошлина
-    duty_ad = ts * rate / 100  # адвалорная часть
+    # Шапка
+    lines.append(f"📋 <b>Код ТН ВЭД:</b> <code>{code}</code>")
+    if name:
+        lines.append(f"🔧 {name}")
     
-    if duty_type == "fixed_eur" and duty_eur:
-        if weight_kg:
-            duty = duty_eur * weight_kg * eur_rate
-            result["duty"] = duty
-            result["duty_detail"] = f"{duty_eur} EUR/кг × {weight_kg} кг = {duty:.2f} {currency}"
+    # Тариф
+    if tariff_info:
+        pt = tariff_info.get("parsed_tariff", {})
+        tariff_str = tariff_info.get("tariff", "")
+        if pt.get("type") in ("min", "plus", "fixed_eur"):
+            lines.append(f"💰 <b>Пошлина:</b> {tariff_str} — комбинированная ({pt.get('formula', '')})")
+        elif pt.get("type") == "percent":
+            lines.append(f"💰 <b>Пошлина:</b> {tariff_str} — адвалорная")
         else:
-            result["duty"] = 0
-            result["duty_detail"] = f"⚠️ {duty_eur} EUR/кг — укажите вес"
-    elif duty_type in ("min", "plus") and duty_eur:
-        duty_eur_cur = duty_eur * (weight_kg or 0) * eur_rate
-        if duty_type == "min":
-            duty = max(duty_ad, duty_eur_cur)
-            if duty_eur_cur > duty_ad:
-                result["duty_detail"] = f"EUR-компонента ({duty_eur_cur:.2f} > {duty_ad:.2f})"
+            lines.append(f"💰 <b>Пошлина:</b> {tariff_str}")
+    
+    # НДС
+    vat_str = "10% (льготная)" if vat_rate == 0.10 else "22% (базовая)"
+    lines.append(f"🧾 <b>НДС:</b> {vat_str}")
+    
+    # Радиосбор
+    if is_radio:
+        _, fee_display = convert_fee_to_currency(RADIO_FEE, currency or "RUB", rates)
+        lines.append(f"⚡ <b>Радиосбор:</b> {fee_display}")
+    
+    # Таможенная стоимость
+    if ts_fallback:
+        lines.append("")
+        lines.append(f"📊 <b>Таможенная стоимость:</b> {ts_fallback:,.2f} {currency}")
+        
+        # Компоненты ТС
+        for key, label in [("invoice", "Инвойс"), ("freight", "Фрахт"), ("insurance", "Страховка")]:
+            if key in ts_components:
+                comp = ts_components[key]
+                val = comp.get("value", 0)
+                cur = comp.get("currency", currency)
+                rate_info = comp.get("rate")
+                if rate_info:
+                    lines.append(f"   • {label}: {val:,.2f} {cur} ({rate_info})")
+                else:
+                    lines.append(f"   • {label}: {val:,.2f} {cur}")
+        
+        if weight_kg:
+            lines.append(f"   • Вес: {weight_kg:,.2f} кг")
+    
+    # Таможенный сбор
+    if customs_fee_rub:
+        _, fee_display = convert_fee_to_currency(customs_fee_rub, currency or "RUB", rates)
+        lines.append("")
+        lines.append(f"🏛 <b>Таможенный сбор:</b> {fee_display}")
+    
+    # Итоговый расчёт (если есть пошлина)
+    if tariff_info and ts_fallback:
+        pt = tariff_info.get("parsed_tariff", {})
+        if pt.get("type") == "percent" and pt.get("value"):
+            duty_pct = pt["value"] / 100
+            duty_val = ts_fallback * duty_pct
+            vat_val = (ts_fallback + duty_val) * vat_rate
+            
+            duty_conv, duty_disp = convert_fee_to_currency(duty_val, currency or "RUB", rates)
+            vat_conv, vat_disp = convert_fee_to_currency(vat_val, currency or "RUB", rates)
+            
+            lines.append("")
+            lines.append(f"📊 <b>Расчёт платежей:</b>")
+            lines.append(f"   • Пошлина ({pt['value']}%): {duty_disp}")
+            lines.append(f"   • НДС ({int(vat_rate * 100)}%): {vat_disp}")
+            
+            if customs_fee_rub:
+                total = duty_val + vat_val + customs_fee_rub
             else:
-                result["duty_detail"] = f"Адвалорная {rate}% ({duty_ad:.2f} ≥ {duty_eur_cur:.2f})"
-        else:  # plus
-            duty = duty_ad + duty_eur_cur
-            result["duty_detail"] = f"{rate}% + {duty_eur} EUR/кг × {weight_kg or 0} кг"
-        result["duty"] = duty
-    else:
-        # ad_valorem
-        result["duty"] = duty_ad
-        result["duty_detail"] = f"{rate}% от {ts:.2f}"
+                total = duty_val + vat_val
+            total_conv, total_disp = convert_fee_to_currency(total, currency or "RUB", rates)
+            lines.append(f"   • <b>Итого к оплате:</b> {total_disp}")
     
-    # 2. НДС
-    vat_base = ts + result["duty"]
-    result["vat"] = vat_base * vat_rate / 100
-    
-    # 3. Таможенный сбор
-    ts_rub = ts * eur_rate  # примерно, если валюта не RUB
-    for threshold, fee in FEE_BRACKETS:
-        if ts_rub <= threshold:
-            result["fee"] = fee
-            break
-    else:
-        result["fee"] = 73_860  # максимум
-    
-    # 4. Итого
-    result["total"] = result["duty"] + result["vat"] + result["fee"] + result["radio_fee"]
-    
-    return result
-
-
-def format_result(calc: Dict[str, Any]) -> str:
-    """Форматирование результата расчёта в HTML."""
-    lines = [
-        f"<b>📊 Таможенные платежи</b>",
-        f"",
-        f"💰 Таможенная стоимость: {calc['ts']:,.2f} {calc['currency']}",
-        f"",
-        f"📋 Пошлина: {calc['duty']:,.2f} {calc['currency']}",
-        f"   ({calc['duty_detail']})",
-        f"",
-        f"📋 НДС {calc['vat_rate']}%: {calc['vat']:,.2f} {calc['currency']}",
-        f"",
-        f"📋 Таможенный сбор: {calc['fee']:,.0f} ₽",
-    ]
-    
-    if calc["radio_fee"]:
-        lines.append(f"📋 Радиосбор: <b>{calc['radio_fee']:,.0f} ₽</b>")
-    
-    lines.extend([
-        f"",
-        f"<b>💵 ИТОГО: {calc['total']:,.2f} {calc['currency']}</b>",
-    ])
+    lines.append("")
+    lines.append("📌 <i>Точную информацию уточняйте у декларанта.</i>")
     
     return "\n".join(lines)
+
+
+# Aliases для совместимости (публичные — импортируются извне)
+strip_ai_assistant_junk = _strip_deepseek_dup
+_strip_ai_assistant_junk = _strip_deepseek_dup  # backward compat
+_format_calculation_fallback = format_calculation_fallback

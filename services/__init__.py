@@ -1,21 +1,36 @@
 """
-services/ — бизнес-логика бота.
+services — бизнес-логика: AI, STT, расчёты, безопасность, ТН ВЭД, валюты.
 """
-from .currency import get_cbr_rates
-from .ai import ask_deepseek
-from .stt import speech_to_text
-from .calc import calculate_customs
-from .security import full_security_scan, is_blocked, unblock_user
-from .tnved import search_tnved, is_radio_electronics
+from services.ai import ask_deepseek
+from services.stt import speech_to_text
+from services.calc import format_calculation_fallback
+from services.security import full_security_scan, is_blocked, unblock_user, contains_pii, redact_pii
+from services.tnved import (
+    load_tnved_rows,
+    restore_tnved_from_db,
+    get_tnved_from_cache,
+    is_radio_electronics,
+    extract_tnved_codes,
+    calculate_customs_fee,
+)
+from services.currency import get_cbr_rates, format_cross_rates, convert_fee_to_currency
 
 __all__ = [
-    "get_cbr_rates",
     "ask_deepseek",
     "speech_to_text",
-    "calculate_customs",
+    "format_calculation_fallback",
     "full_security_scan",
     "is_blocked",
     "unblock_user",
-    "search_tnved",
+    "contains_pii",
+    "redact_pii",
+    "load_tnved_rows",
+    "restore_tnved_from_db",
+    "get_tnved_from_cache",
     "is_radio_electronics",
+    "extract_tnved_codes",
+    "calculate_customs_fee",
+    "get_cbr_rates",
+    "format_cross_rates",
+    "convert_fee_to_currency",
 ]

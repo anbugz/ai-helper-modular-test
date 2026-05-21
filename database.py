@@ -155,31 +155,6 @@ def get_all_corrections() -> List[Tuple]:
     return rows
 
 
-def get_unnotified_corrections() -> List[Tuple]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, user_id, username, original, correction, created_at FROM corrections WHERE notified = 0 ORDER BY created_at"
-    )
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def mark_corrections_notified(ids: List[int]) -> None:
-    if not ids:
-        return
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    placeholders = ",".join("?" * len(ids))
-    c.execute(
-        f"UPDATE corrections SET notified = 1 WHERE id IN ({placeholders})",
-        ids,
-    )
-    conn.commit()
-    conn.close()
-
-
 # ------------------------------------------------------------------
 # База знаний
 # ------------------------------------------------------------------
@@ -213,7 +188,7 @@ def get_all_knowledge() -> List[Dict]:
     ]
 
 
-# Alias для совместимости с handlers.py
+# Alias для совместимости
 get_knowledge = get_all_knowledge
 
 

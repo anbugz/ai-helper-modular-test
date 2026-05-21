@@ -1,51 +1,49 @@
-#!/usr/bin/env python3
 """
-main.py — точка входа для WA AI Helper.
-Модульная архитектура: handlers/, services/, utils/
+main.py — точка входа для модульного бота WA AI Helper.
+Регистрирует все хэндлеры и запускает polling.
 """
+import asyncio
 import sys
 import os
-import asyncio
 
-# bothost: гарантируем что текущая папка в PYTHONPATH
+# Добавляем директорию проекта в путь (для импортов)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from bot_instance import bot, dp
 from config import logger, VERSION
 from database import init_db
-from bot_instance import dp, bot
-from tnved_engine import restore_tnved_from_db
-
-# Регистрация обработчиков из модульной структуры
-# commands и admin — явная регистрация
-from handlers.commands import register_commands
-from handlers.admin import register_admin
-# text, voice, documents — side-effect импорт (@dp.message декораторы)
-import handlers.text   # noqa: F401
-import handlers.voice  # noqa: F401
-import handlers.documents  # noqa: F401
+from services.tnved import restore_tnved_from_db
 
 
-def register_all_handlers():
-    """Регистрация обработчиков.
+async def main():
+    logger.info(f"=== West Asia AI Helper v{VERSION} (modular) ===")
     
-    commands, text, voice, documents регистрируются через
-    side-effect импорта (@dp.message декораторы).
-    admin — явная регистрация.
-    """
-    # register_admin(dp)  # TODO: раскомментировать когда admin.py будет готов
-    pass
-
-
-async def main() -> None:
-    logger.info(f"Bot starting. Version: {VERSION}")
+    # Инициализация БД
     init_db()
-    logger.info("Database initialized.")
+    
+    # Восстановление кэша ТН ВЭД из БД
     restore_tnved_from_db()
-    logger.info("TNVED cache restored from DB (if exists).")
-    register_all_handlers()
-    logger.info("All handlers registered.")
+    
+    # Регистрация хэндлеров
+    from handlers import commands, admin, documents, voice, text
+    
+    dp.include_router(commands.router)
+    dp.include_router(admin.router)
+    dp.include_router(documents.router)
+    dp.include_router(voice.router)
+    dp.include_router(text.router)
+    
+    logger.info("Хэндлеры зарегистрированы. Запуск polling...")
+    
+    # Запуск бота
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен.")
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {e}", exc_info=True)
+        sys.exit(1)
