@@ -38,7 +38,7 @@ from services.tnved import (
     is_radio_electronics, extract_tnved_codes,
     get_tnved_from_cache, calculate_customs_fee,
 )
-from services.currency import get_cbr_rates, format_cross_rates, convert_fee_to_currency
+from services.currency import get_cbr_rates, format_cross_rates, convert_fee_to_currency, detect_base_currency
 from services.ai import ask_deepseek, build_messages
 from services.calc import format_calculation_fallback, strip_ai_assistant_junk
 from utils.telegram import safe_send, check_rate_limit
