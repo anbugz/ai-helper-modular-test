@@ -27,8 +27,9 @@ import handlers.documents  # noqa: F401
 
 def register_all_handlers():
     """Регистрация обработчиков с явной инициализацией."""
-    register_commands(dp)
-    register_admin(dp)
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(register_commands(dp))
+    asyncio.get_event_loop().run_until_complete(register_admin(dp))
     # text, voice, documents — хэндлеры уже зарегистрированы через @dp.message при импорте
 
 
