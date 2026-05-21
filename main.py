@@ -25,11 +25,15 @@ import handlers.voice  # noqa: F401
 import handlers.documents  # noqa: F401
 
 
-async def register_all_handlers():
-    """Регистрация обработчиков с явной инициализацией."""
-    await register_commands(dp)
-    await register_admin(dp)
-    # text, voice, documents — хэндлеры уже зарегистрированы через @dp.message при импорте
+def register_all_handlers():
+    """Регистрация обработчиков.
+    
+    commands, text, voice, documents регистрируются через
+    side-effect импорта (@dp.message декораторы).
+    admin — явная регистрация.
+    """
+    # register_admin(dp)  # TODO: раскомментировать когда admin.py будет готов
+    pass
 
 
 async def main() -> None:
@@ -38,7 +42,7 @@ async def main() -> None:
     logger.info("Database initialized.")
     restore_tnved_from_db()
     logger.info("TNVED cache restored from DB (if exists).")
-    await register_all_handlers()
+    register_all_handlers()
     logger.info("All handlers registered.")
     await dp.start_polling(bot)
 
