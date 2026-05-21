@@ -16,19 +16,20 @@ from bot_instance import dp, bot
 from tnved_engine import restore_tnved_from_db
 
 # Регистрация обработчиков из модульной структуры
+# commands и admin — явная регистрация
 from handlers.commands import register_commands
 from handlers.admin import register_admin
-# text, voice, documents регистрируются через импорт side-effect
+# text, voice, documents — side-effect импорт (@dp.message декораторы)
 import handlers.text   # noqa: F401
 import handlers.voice  # noqa: F401
 import handlers.documents  # noqa: F401
 
 
 def register_all_handlers():
-    """Регистрация всех обработчиков."""
+    """Регистрация обработчиков с явной инициализацией."""
     register_commands(dp)
     register_admin(dp)
-    # text, voice, documents регистрируются при импорте через @dp.message
+    # text, voice, documents — хэндлеры уже зарегистрированы через @dp.message при импорте
 
 
 async def main() -> None:
