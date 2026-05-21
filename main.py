@@ -25,11 +25,10 @@ import handlers.voice  # noqa: F401
 import handlers.documents  # noqa: F401
 
 
-def register_all_handlers():
+async def register_all_handlers():
     """Регистрация обработчиков с явной инициализацией."""
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(register_commands(dp))
-    asyncio.get_event_loop().run_until_complete(register_admin(dp))
+    await register_commands(dp)
+    await register_admin(dp)
     # text, voice, documents — хэндлеры уже зарегистрированы через @dp.message при импорте
 
 
@@ -39,7 +38,7 @@ async def main() -> None:
     logger.info("Database initialized.")
     restore_tnved_from_db()
     logger.info("TNVED cache restored from DB (if exists).")
-    register_all_handlers()
+    await register_all_handlers()
     logger.info("All handlers registered.")
     await dp.start_polling(bot)
 
