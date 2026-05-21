@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict
 from aiogram.types import Message
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from config import RATE_LIMIT_SECONDS, logger
 
@@ -47,11 +48,11 @@ async def safe_send(message: Message, text: str, chunk: int = 4000) -> None:
     """
     try:
         if len(text) <= chunk:
-            await message.answer(text)
+            await message.answer(text, parse_mode=ParseMode.HTML)
             return
         parts = [text[i:i + chunk] for i in range(0, len(text), chunk)]
         for part in parts:
-            await message.answer(part)
+            await message.answer(part, parse_mode=ParseMode.HTML)
             await asyncio.sleep(0.3)
     except TelegramBadRequest as e:
         err = str(e).lower()

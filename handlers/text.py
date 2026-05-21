@@ -680,7 +680,7 @@ async def handle_text(message: Message):
         if found_codes:
             info = found_codes[0]
             pt = info["parsed_tariff"]
-            header = f"📋 <b>Код:</b> <code>{info['code']}</code>\n"
+            header = f"📋 <code>{info['code']}</code>\n"
             name_clean = re.sub(r"\s*\(за исключением[^)]+", "", info["name"]).strip()
             full_name = TNVED_FULL_NAMES.get(info["code"][:6], name_clean)
             header += f"🔧 {full_name}\n"

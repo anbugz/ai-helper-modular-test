@@ -48,15 +48,10 @@ def load_tnved_rows(rows: List[List[str]], persist: bool = True) -> None:
         f"{len(TNVED_FULL_NAMES)} полных наименований"
     )
     if persist:
-        # Импорт парсера тарифов — локально, чтобы избежать циклических импортов
-        try:
-            from parsers import parse_tnved_tariff
-            parsed_rows = [
-                parse_tnved_tariff(row[2] if len(row) > 2 else "") for row in _TNVED_ROWS_CACHE
-            ]
-            save_tnved_batch(_TNVED_ROWS_CACHE, parsed_rows)
-        except ImportError:
-            logger.warning("parsers.parse_tnved_tariff не найден — кэш в памяти без сохранения в БД")
+        parsed_rows = [
+            parse_tnved_tariff(row[2] if len(row) > 2 else "") for row in _TNVED_ROWS_CACHE
+        ]
+        save_tnved_batch(_TNVED_ROWS_CACHE, parsed_rows)
 
 
 def restore_tnved_from_db() -> bool:
@@ -105,12 +100,7 @@ def get_tnved_from_cache(code: str) -> Optional[dict]:
 def _row_to_tnved_dict(row: List[str]) -> dict:
     """Преобразует строку Excel в словарь с данными ТН ВЭД."""
     tariff = row[2] if len(row) > 2 else ""
-    # Локальный импорт для избежания цикла
-    try:
-        from parsers import parse_tnved_tariff
-        parsed = parse_tnved_tariff(tariff)
-    except ImportError:
-        parsed = {"type": "", "formula": "", "value": 0}
+    parsed = parse_tnved_tariff(tariff)
     return {
         "code": row[0] if row else "",
         "name": row[1] if len(row) > 1 else "",
@@ -173,7 +163,7 @@ def calculate_customs_fee(value_rub: float) -> int:
 
 
 # ------------------------------------------------------------------
-# Парсинг тарифа (fallback если parsers.py недоступен)
+# Парсинг тарифа
 # ------------------------------------------------------------------
 
 def parse_tnved_tariff(tariff_str: str) -> dict:
