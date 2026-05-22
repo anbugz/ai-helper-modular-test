@@ -164,7 +164,7 @@ VED_INTENT_KEYWORDS = (
     "тн вэд", "таможн", "пошлин", "деклар", "оформлен",
     # Действия с кодом
     "подбери", "подбир", "найди код", "какой код", "код товара",
-    "код для", "код на ", "шифр", "номенклатур",
+    "код для", "код на ", "шифр", "номенклатур", "код",
     # Материалы
     "хлопок", "хлопчатобумажн", "шерсть", "шерстяной", "шёлк", "шелк", "шелковый",
     "лён", "лен ", "льняной", "синтетика", "полиэстер", "полиэфир", "акрил",
@@ -367,6 +367,12 @@ async def handle_text(message: Message):
                 found_codes.append(info)
             else:
                 missing.append(c)
+
+    # === ОПРЕДЕЛЕНИЕ НДС ЗАРАНЕЕ ===
+    vat_rate = 0.22
+    ti = found_codes[0] if found_codes else None
+    if ti and any(w in ti.get("name", "").lower() for w in ("пищев", "детск", "медиц", "книг", "печат")):
+        vat_rate = 0.10
 
     # === ОПРЕДЕЛЕНИЕ ТИПА ЗАПРОСА ===
     calc_words = (
@@ -582,6 +588,9 @@ async def handle_text(message: Message):
             answer = strip_ai_assistant_junk(answer)
             logger.info(f"[KB DEBUG s4] DeepSeek answer: {answer[:500]}")
             
+            # СОХРАНЯЕМ ОТВЕТ В БД (было пропущено!)
+            save_message(user_id, message.from_user.username or "", "assistant", answer)
+            
             await safe_send(message, answer)
             return
 
@@ -590,8 +599,6 @@ async def handle_text(message: Message):
     has_ins = any(w in text_lower for w in ("страховка", "страхование"))
 
     # Инициализация переменных (используются в обоих сценариях)
-    ti = found_codes[0] if found_codes else None
-    vat_rate = 0.22
     customs_fee_rub = 0.0
     ts_fallback = 0.0
     ts_components: Dict[str, Dict[str, Any]] = {}
@@ -852,8 +859,7 @@ async def handle_text(message: Message):
     # --- Курс ЦБ РФ ---
     # Добавляем курс ТОЛЬКО если его ещё нет в ответе
     if "💱" not in answer and "курс цб" not in answer.lower():
-        try:
-            rates = await get_cbr_rates()
+        if rates:
             cny = rates.get("CNY", "н/д")
             usd = rates.get("USD", "н/д")
             eur = rates.get("EUR", "н/д")
@@ -862,8 +868,6 @@ async def handle_text(message: Message):
                 f"\n\n💱 <i>Курс ЦБ РФ на {date}: "
                 f"1 USD = {usd} ₽, 1 CNY = {cny} ₽, 1 EUR = {eur} ₽</i>"
             )
-        except Exception:
-            pass
 
     save_message(user_id, message.from_user.username or "", "assistant", answer)
     await safe_send(message, answer)
