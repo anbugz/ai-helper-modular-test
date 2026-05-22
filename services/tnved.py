@@ -209,3 +209,19 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
         return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
     
     return {"type": "", "formula": tariff_str, "value": 0}
+    
+    def extract_tnved_codes(text: str) -> List[str]:
+    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
+    codes = re.findall(r"\d{8,10}", normalized)
+    
+    # Если 10-значных нет, ищем 4-6-значные рядом со словом "код"
+    if not codes:
+        # Находим "код 5208", "группа 5208", "подгруппа 5208"
+        short = re.findall(r"(?:код|группа|подгруппа|раздел)\s*[:=]?\s*(\d{4,6})\b", text.lower())
+        for s in short:
+            # Ищем в БД полный 10-значный код по LIKE
+            from database import search_tnved_in_db
+            matches = search_tnved_in_db(s)
+            if matches:
+                codes.append(matches[0]["code"])
+    return codes
