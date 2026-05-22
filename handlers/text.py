@@ -820,7 +820,7 @@ async def handle_text(message: Message):
                 "таможенная стоимость:", "таможенных платежей",
             )
         )
-        if is_calc and base_cur and not has_deepseek_calc:
+        if is_calc and found_codes and base_cur and not has_deepseek_calc:
             code_val = found_codes[0]["code"] if found_codes else None
             name_val = (
                 TNVED_FULL_NAMES.get(found_codes[0]["code"][:6], found_codes[0]["name"])
