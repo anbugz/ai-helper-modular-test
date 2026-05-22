@@ -9,7 +9,7 @@ from aiogram.types import Message
 
 from bot_instance import bot
 from config import ADMIN_ID, LEARN_MODE, PENDING_CODE_UPDATE, logger
-from database import get_knowledge, save_knowledge, get_dialogs_for_export, create_logs_xlsx
+from database import get_knowledge, save_knowledge, save_knowledge_sections, get_dialogs_for_export, create_logs_xlsx
 from services.security import unblock_user
 from services.currency import get_cbr_rates
 from utils.telegram import parse_date_range, safe_send
@@ -86,13 +86,25 @@ async def cmd_done(message: Message):
         await message.answer("Ты не в режиме обучения.")
         return
     mode = LEARN_MODE.pop(uid)
-    if mode["content"]:
+    if not mode["content"]:
+        await message.answer("❌ Нет контента.")
+        return
+    
+    # Разбиваем документ на секции по заголовкам
+    from utils.text import split_document_to_sections
+    sections = split_document_to_sections(mode["content"], default_topic=mode["topic"])
+    
+    if len(sections) > 1:
+        count = save_knowledge_sections(sections, message.from_user.username or str(uid))
+        topics_preview = "\n".join(f"  • {t[:60]}" for t, c in sections[:10])
+        await message.answer(
+            f"✅ Документ «{mode['topic']}» разбит на {count} секций:\n{topics_preview}"
+        )
+    else:
         save_knowledge(
             mode["topic"], mode["content"], "", message.from_user.username or str(uid)
         )
         await message.answer(f"✅ «{mode['topic']}» сохранено.")
-    else:
-        await message.answer("❌ Нет контента.")
 
 
 # ------------------------------------------------------------------

@@ -170,6 +170,24 @@ def save_knowledge(topic: str, content: str, questions: str, added_by: str) -> N
     conn.close()
 
 
+def save_knowledge_sections(sections: list, added_by: str) -> int:
+    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    count = 0
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    for topic, content in sections:
+        if content.strip():
+            c.execute(
+                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
+                (topic[:255], content, "", added_by, now),
+            )
+            count += 1
+    conn.commit()
+    conn.close()
+    return count
+
+
 def get_all_knowledge() -> List[Dict]:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()

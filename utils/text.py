@@ -138,3 +138,68 @@ def lemmatize_russian(word: str) -> str:
         if w.endswith(suffix) and len(w) > len(suffix) + 2:
             return w[:-len(suffix)]
     return w
+
+
+# ------------------------------------------------------------------
+# SPLIT DOCUMENT TO SECTIONS (разбивка документа по заголовкам)
+# ------------------------------------------------------------------
+
+# Паттерны заголовков: "1. Текст", "# Заголовок", "=== Заголовок ===", "ЗАГОЛОВОК ЗАГЛАВНЫМИ"
+_SECTION_HEADER_RE = re.compile(
+    r'^(?:'
+    r'\d+[\.\)]\s+.+?'          # 1. Заголовок  или  1) Заголовок
+    r'|#{1,4}\s+.+?'             # # Заголовок  или  ## Заголовок
+    r'|\s*=+\s*.+?\s*=+\s*'     # === Заголовок ===
+    r'|[А-ЯЁ][А-ЯЁ\s\d]{3,}'    # ЗАГЛАВНЫМИ БУКВАМИ (4+ символа)
+    r')$',
+    re.MULTILINE
+)
+
+
+def split_document_to_sections(text: str, default_topic: str = "Документ") -> list:
+    """Разбивает текст на секции по заголовкам.
+    
+    Returns:
+        [(topic, content), ...] — список секций
+    """
+    if not text or not text.strip():
+        return []
+    
+    lines = text.split('\n')
+    sections = []
+    current_topic = default_topic
+    current_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        # Проверяем — это заголовок?
+        is_header = bool(_SECTION_HEADER_RE.match(stripped))
+        # Дополнительная проверка: Заголовок: (с двоеточием, не длиннее 80 символов)
+        if not is_header and stripped and len(stripped) < 80:
+            if stripped.endswith(':') and stripped[0].isupper():
+                is_header = True
+        
+        if is_header:
+            # Сохраняем предыдущую секцию если есть контент
+            if current_lines and len('\n'.join(current_lines).strip()) > 20:
+                sections.append((
+                    current_topic,
+                    '\n'.join(current_lines).strip()
+                ))
+            current_topic = stripped.strip('#= ').strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+    
+    # Последняя секция
+    if current_lines and len('\n'.join(current_lines).strip()) > 20:
+        sections.append((
+            current_topic,
+            '\n'.join(current_lines).strip()
+        ))
+    
+    # Если ничего не разбилось — сохраняем целиком
+    if not sections:
+        sections.append((default_topic, text.strip()))
+    
+    return sections

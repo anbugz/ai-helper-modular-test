@@ -534,7 +534,7 @@ async def handle_text(message: Message):
                             context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
                             for i, (score, k) in enumerate(kb_matched[:2], 1):
                                 topic = k.get("topic", "")
-                                content = k.get("content", "")[:8000]
+                                content = k.get("content", "")[:3000]
                                 context_parts.append(f"\n--- Тема {i}: {topic} ---\n{content}")
                             context_parts.append("\nИспользуй контекст выше при ответе.")
             except Exception as e:
@@ -560,11 +560,15 @@ async def handle_text(message: Message):
             )
         
             extra = "\n".join(context_parts)
+            # Ограничиваем общий размер промпта
+            if len(extra) > 12000:
+                extra = extra[:12000] + "\n...[контекст обрезан]"
             logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
             # Подбор кода — без истории (чтобы не склеивались запросы)
             msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
             answer = await ask_deepseek(msgs)
             answer = strip_ai_assistant_junk(answer)
+            logger.info(f"[KB DEBUG s4] DeepSeek answer: {answer[:500]}")
             
             await safe_send(message, answer)
             return
@@ -724,16 +728,20 @@ async def handle_text(message: Message):
                         extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                         for i, (score, k) in enumerate(matched[:2], 1):
                             topic = k.get("topic", "")
-                            content = k.get("content", "")[:8000]
+                            content = k.get("content", "")[:3000]
                             extra += f"\n--- Тема {i}: {topic} ---\n{content}\n"
                         extra += "\nОБЯЗАТЕЛЬНО используй контекст выше при ответе. Если в контексте есть контактные данные — выведи их ПОЛНОСТЬЮ.\n"
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
         
+        # Ограничиваем общий размер промпта
+        if len(extra) > 12000:
+            extra = extra[:12000] + "\n...[контекст обрезан]"
         logger.info(f"[KB DEBUG s3] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
         # AI-ассистент — без истории (чтобы не склеивались запросы)
         msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
         answer = await ask_deepseek(msgs)
+        logger.info(f"[KB DEBUG s3] DeepSeek answer: {answer[:500]}")
         
         # Лёгкая очистка
         answer = strip_ai_assistant_junk(answer)
