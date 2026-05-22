@@ -532,11 +532,12 @@ async def handle_text(message: Message):
                         if kb_matched:
                             kb_matched.sort(key=lambda x: -x[0])
                             context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
-                            for i, (score, k) in enumerate(kb_matched[:2], 1):
+                            # Берём топ-5 секций для полноты ответа
+                            for i, (score, k) in enumerate(kb_matched[:5], 1):
                                 topic = k.get("topic", "")
                                 content = k.get("content", "")[:3000]
                                 context_parts.append(f"\n--- Тема {i}: {topic} ---\n{content}")
-                            context_parts.append("\nИспользуй контекст выше при ответе.")
+                            context_parts.append("\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.")
             except Exception as e:
                 logger.warning(f"KB search error: {e}")
         
@@ -707,6 +708,15 @@ async def handle_text(message: Message):
                         query_words.add(lemma)
                 
                 if query_words:
+                    # Связанный поиск: контакты → декларант, декларант → контакты
+                    related = {"контакт": ["декларант", "агент", "поставщик", "менеджер"],
+                               "декларант": ["контакт", "телефон", "email"],
+                               "телефон": ["контакт", "декларант"],
+                               "контакты": ["декларант", "агент", "поставщик"]}
+                    for w in list(query_words):
+                        if w in related:
+                            query_words.update(related[w])
+                    
                     # Ищем совпадения по полному content
                     matched = []
                     for k in all_knowledge:
@@ -722,15 +732,15 @@ async def handle_text(message: Message):
                         if score > 0:
                             matched.append((score, k))
                     
-                    # Берём топ-2 совпадения
+                    # Берём топ-5 совпадений для полноты
                     matched.sort(key=lambda x: -x[0])
                     if matched:
                         extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
-                        for i, (score, k) in enumerate(matched[:2], 1):
+                        for i, (score, k) in enumerate(matched[:5], 1):
                             topic = k.get("topic", "")
                             content = k.get("content", "")[:3000]
                             extra += f"\n--- Тема {i}: {topic} ---\n{content}\n"
-                        extra += "\nОБЯЗАТЕЛЬНО используй контекст выше при ответе. Если в контексте есть контактные данные — выведи их ПОЛНОСТЬЮ.\n"
+                        extra += "\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.\n"
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
         
