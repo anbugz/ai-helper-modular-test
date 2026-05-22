@@ -506,6 +506,39 @@ async def handle_text(message: Message):
                     context_parts.append(f"  {r['code']} | {name[:120]} | {r['tariff']}")
             else:
                 context_parts.append("\nВ БД нет точных совпадений по материалу.")
+            
+            # === ПОИСК ПО БАЗЕ ЗНАНИЙ (добавляем во все сценарии) ===
+            try:
+                all_knowledge = get_knowledge()
+                if all_knowledge:
+                    kb_words = {w for w in re.findall(r'[а-яёa-z]{3,}', user_text_lower) if w not in STOP_WORDS}
+                    for w in list(kb_words):
+                        lemma = lemmatize_russian(w)
+                        if lemma != w:
+                            kb_words.add(lemma)
+                    if kb_words:
+                        kb_matched = []
+                        for k in all_knowledge:
+                            topic_lower = k.get("topic", "").lower()
+                            content_lower = k.get("content", "").lower()
+                            score = 0
+                            for qw in kb_words:
+                                if qw in topic_lower:
+                                    score += 5
+                                if qw in content_lower:
+                                    score += 2
+                            if score > 0:
+                                kb_matched.append((score, k))
+                        if kb_matched:
+                            kb_matched.sort(key=lambda x: -x[0])
+                            context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
+                            for i, (score, k) in enumerate(kb_matched[:2], 1):
+                                topic = k.get("topic", "")
+                                content = k.get("content", "")[:2000]
+                                context_parts.append(f"\n--- Тема {i}: {topic} ---\n{content}")
+                            context_parts.append("\nИспользуй контекст выше при ответе.")
+            except Exception as e:
+                logger.warning(f"KB search error: {e}")
         
             context_parts.append(
                 "\n\n=== ИНСТРУКЦИЯ ДЛЯ ОТВЕТА ===\n"
