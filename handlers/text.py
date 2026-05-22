@@ -511,7 +511,7 @@ async def handle_text(message: Message):
             try:
                 all_knowledge = get_knowledge()
                 if all_knowledge:
-                    kb_words = {w for w in re.findall(r'[а-яёa-z]{3,}', user_text_lower) if w not in STOP_WORDS}
+                    kb_words = {w for w in re.findall(r'[а-яёa-z]{3,}', text_lower) if w not in STOP_WORDS}
                     for w in list(kb_words):
                         lemma = lemmatize_russian(w)
                         if lemma != w:
@@ -692,7 +692,7 @@ async def handle_text(message: Message):
             all_knowledge = get_all_knowledge()
             if all_knowledge:
                 # Извлекаем ключевые слова, фильтруем стоп-слова
-                raw_words = set(re.findall(r'[а-яёa-z]{3,}', user_text_lower))
+                raw_words = set(re.findall(r'[а-яёa-z]{3,}', text_lower))
                 query_words = {w for w in raw_words if w not in STOP_WORDS}
                 # Добавляем лемматизированные формы
                 for w in list(query_words):
