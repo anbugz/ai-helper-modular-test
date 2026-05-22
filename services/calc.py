@@ -95,7 +95,7 @@ def format_calculation_fallback(
     
     lines.append("")
     
-    # === 2. КОНВЕРТАЦИЯ В ВАЛЮТУ ИНВОЙСА ===
+        # === 2. КОНВЕРТАЦИЯ В ВАЛЮТУ ИНВОЙСА ===
     lines.append(f"🔄 <b>Конвертация в валюту инвойса ({currency}):</b>")
     
     # Инвойс
@@ -108,7 +108,10 @@ def format_calculation_fallback(
         else:
             conv = inv.get("converted", val)
             rate_info = inv.get("rate", "")
-            lines.append(f"• Инвойс: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+            if rate_info:
+                lines.append(f"• Инвойс: {rate_info}")
+            else:
+                lines.append(f"• Инвойс: {val:,.2f} {cur} → {conv:,.2f} {currency}")
     
     # Фрахт
     if "freight" in ts_components:
@@ -120,7 +123,10 @@ def format_calculation_fallback(
         if cur == currency:
             lines.append(f"• Фрахт: {val:,.2f} {currency}")
         else:
-            lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+            if rate_info:
+                lines.append(f"• Фрахт: {rate_info}")
+            else:
+                lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency}")
     
     # Страховка
     if "insurance" in ts_components:
@@ -132,7 +138,10 @@ def format_calculation_fallback(
         if cur == currency:
             lines.append(f"• Страховка: {val:,.2f} {currency}")
         else:
-            lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+            if rate_info:
+                lines.append(f"• Страховка: {rate_info}")
+            else:
+                lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency}")
     
     lines.append("")
     
