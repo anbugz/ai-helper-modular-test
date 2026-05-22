@@ -85,6 +85,7 @@ async def handle_document(message: Message):
         file = await bot.get_file(doc.file_id)
         bytes_io = await bot.download_file(file.file_path)
         data = parse_xlsx(bytes_io)
+        logger.info(f"XLSX parsed: {len(data)} rows, first 3: {data[:3]}")
         if not data:
             await message.answer("Не прочитал.")
             return
@@ -101,10 +102,11 @@ async def handle_document(message: Message):
         if has_tnved and (is_code_update or user_id == ADMIN_ID):
             load_tnved_rows(data)
             await message.answer(
-                f"📋 Загружено: {len(data)} кодов ТН ВЭД"
+                f"📋 Загружено: {len(data)} кодов ТН ВЭД в базу данных."
             )
+            return  # Выходим — ТН ВЭД загружены успешно
 
-        # Обновление кодов радиоэлектроники
+        # Обновление кодов радиоэлектроники (только если нет ТН ВЭД в файле)
         if is_code_update and _extract_codes_from_rows:
             codes = _extract_codes_from_rows(data)
             if not codes:
