@@ -560,8 +560,10 @@ async def handle_text(message: Message):
             )
         
             extra = "\n".join(context_parts)
+            logger.info(f"[KB DEBUG scenario 4] KB words: {kb_words}, context len: {len(extra)}")
             # Подбор кода — без истории (чтобы не склеивались запросы)
             msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
+            logger.info(f"[KB DEBUG scenario 4] Final prompt:\n{extra[:2000]}")
             answer = await ask_deepseek(msgs)
             answer = strip_ai_assistant_junk(answer)
             
@@ -719,6 +721,9 @@ async def handle_text(message: Message):
                     
                     # Берём топ-2 совпадения
                     matched.sort(key=lambda x: -x[0])
+                    logger.info(f"[KB DEBUG scenario 3] Query words: {query_words}, matched: {len(matched)}")
+                    for sc, mk in matched[:2]:
+                        logger.info(f"[KB DEBUG]   score={sc} topic={mk.get('topic','')}")
                     if matched:
                         extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                         for i, (score, k) in enumerate(matched[:2], 1):
@@ -729,6 +734,7 @@ async def handle_text(message: Message):
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
         
+        logger.info(f"[KB DEBUG scenario 3] Final prompt:\n{extra[:2000]}")
         # AI-ассистент — без истории (чтобы не склеивались запросы)
         msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
         answer = await ask_deepseek(msgs)
