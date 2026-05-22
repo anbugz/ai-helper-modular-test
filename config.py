@@ -14,7 +14,7 @@ load_dotenv(dotenv_path=env_path)
 VERSION = "2.1.0"
 
 # --- API Keys ---
-BOT_TOKEN = os.getenv("PROD_BOT_TOKEN", os.getenv("BOT_TOKEN", ""))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
