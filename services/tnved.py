@@ -189,13 +189,11 @@ def extract_tnved_codes(text: str) -> List[str]:
 # ------------------------------------------------------------------
 
 def calculate_customs_fee(value_rub: float) -> int:
-    """Рассчитывает таможенный сбор по шкале ПП РФ №1637."""
     from config import CUSTOMS_FEE_RUB
-    
     for threshold, fee in sorted(CUSTOMS_FEE_RUB.items()):
         if value_rub <= threshold:
             return fee
-    return 100_000  # максимум по шкале (не радиосбор!)
+    return 73_860  # максимум по шкале с 01.01.2026
 
 
 # ------------------------------------------------------------------
