@@ -41,16 +41,33 @@ def clear_rate_limit(user_id: int) -> None:
 # SAFE SEND (безопасная отправка длинных сообщений)
 # ------------------------------------------------------------------
 
-async def safe_send(message: Message, text: str, chunk: int = 4000) -> None:
+def _split_smart(text: str, chunk: int = 3800) -> list:
+    """Разбивает текст на части, стараясь не резать HTML-теги и абзацы."""
+    if len(text) <= chunk:
+        return [text]
+    parts = []
+    while text:
+        if len(text) <= chunk:
+            parts.append(text)
+            break
+        # Ищем ближайший перенос строки перед chunk
+        cut = text.rfind('\n\n', 0, chunk)
+        if cut == -1:
+            cut = text.rfind('\n', 0, chunk)
+        if cut == -1:
+            cut = chunk
+        parts.append(text[:cut])
+        text = text[cut:].lstrip()
+    return parts
+
+
+async def safe_send(message: Message, text: str, chunk: int = 3800) -> None:
     """Безопасно отправляет текст, разбивая на части при необходимости.
     
     При ошибке парсинга HTML — отправляет как plain text.
     """
     try:
-        if len(text) <= chunk:
-            await message.answer(text, parse_mode=ParseMode.HTML)
-            return
-        parts = [text[i:i + chunk] for i in range(0, len(text), chunk)]
+        parts = _split_smart(text, chunk)
         for part in parts:
             await message.answer(part, parse_mode=ParseMode.HTML)
             await asyncio.sleep(0.3)
@@ -63,10 +80,8 @@ async def safe_send(message: Message, text: str, chunk: int = 4000) -> None:
             plain = plain.replace("<code>", "").replace("</code>", "")
             plain = plain.replace("<pre>", "").replace("</pre>", "")
             plain = plain.replace("<a href=", "[").replace("</a>", "]")
-            if len(plain) <= chunk:
-                await message.answer(plain, parse_mode=None)
-                return
-            for part in [plain[i:i + chunk] for i in range(0, len(plain), chunk)]:
+            parts = _split_smart(plain, chunk)
+            for part in parts:
                 await message.answer(part, parse_mode=None)
                 await asyncio.sleep(0.3)
         else:

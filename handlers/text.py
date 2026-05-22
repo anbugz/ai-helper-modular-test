@@ -516,6 +516,17 @@ async def handle_text(message: Message):
                         lemma = lemmatize_russian(w)
                         if lemma != w:
                             kb_words.add(lemma)
+                    # Связанный поиск: расширяем запрос
+                    related = {
+                        "декларант": ["контакт", "телефон", "email", "анна", "михаил", "александра"],
+                        "контакт": ["декларант", "анна", "михаил", "александра"],
+                        "анна": ["декларант", "контакт", "телефон"],
+                        "михаил": ["декларант", "контакт", "код", "тн вэд"],
+                        "александра": ["декларант", "контакт", "таможен", "платеж"],
+                    }
+                    for w in list(kb_words):
+                        if w in related:
+                            kb_words.update(related[w])
                     if kb_words:
                         kb_matched = []
                         for k in all_knowledge:
