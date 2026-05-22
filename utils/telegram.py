@@ -2,6 +2,7 @@
 utils/telegram.py — работа с Telegram API: отправка сообщений, rate limit.
 Перенос из utils.py.
 """
+import re
 import asyncio
 from datetime import datetime
 from typing import Dict
