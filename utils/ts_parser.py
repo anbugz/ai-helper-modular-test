@@ -156,9 +156,9 @@ def extract_ts_components_with_currency(text: str) -> Dict[str, Dict]:
             num_len = len(re.match(r"[\d\s,.]+", m.group(1)).group())
             pos_after = m.start(1) + num_len
 
-            # Пропускаем если перед числом ключевое слово фрахта/страховки
-            before = text_clean[max(0, m.start() - 20):m.start()]
-            if any(kw in before for kw in ("фрахт", "доставк", "перевозк", "страховк", "страхан")):
+            # Пропускаем если перед числом ключевое слово фрахта/страховки/кода
+            before = text_clean[max(0, m.start() - 30):m.start()]
+            if any(kw in before for kw in ("фрахт", "доставк", "перевозк", "страховк", "страхан", "код", "группа", "подгруппа", "раздел")):
                 continue
 
             # Проверяем что после числа (первые 2 токена)
