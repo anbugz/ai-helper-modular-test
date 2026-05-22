@@ -84,24 +84,9 @@ async def safe_send(message: Message, text: str, chunk: int = 3800) -> None:
     try:
         parts = _split_smart(text, chunk)
         for part in parts:
-            await _send_with_retry(message, part, ParseMode.HTML)
-            await asyncio.sleep(0.5)
-    except TelegramNetworkError as e:
-        logger.error(f"Network error after retries, sending as plain text: {e}")
-        # Фallback: убираем HTML и пробуем ещё раз
-        plain = text.replace("<b>", "").replace("</b>", "")
-        plain = plain.replace("<i>", "").replace("</i>", "")
-        plain = plain.replace("<code>", "").replace("</code>", "")
-        plain = plain.replace("<pre>", "").replace("</pre>", "")
-        plain = plain.replace("<a href=", "[").replace("</a>", "]")
-        parts = _split_smart(plain, chunk)
-        for part in parts:
-            try:
-                await message.answer(part, parse_mode=None)
-                await asyncio.sleep(0.5)
-            except Exception:
-                break
-    except TelegramBadRequest as e:
+            await message.answer(part, parse_mode=ParseMode.HTML)
+            await asyncio.sleep(0.3)
+    except (TelegramBadRequest, TelegramNetworkError) as e:
         err = str(e).lower()
         if "parse" in err or "tag" in err or "entity" in err:
             plain = text.replace("<b>", "").replace("</b>", "")
