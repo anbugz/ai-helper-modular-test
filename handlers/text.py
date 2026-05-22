@@ -560,6 +560,7 @@ async def handle_text(message: Message):
             )
         
             extra = "\n".join(context_parts)
+            logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
             # Подбор кода — без истории (чтобы не склеивались запросы)
             msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
             answer = await ask_deepseek(msgs)
@@ -725,10 +726,11 @@ async def handle_text(message: Message):
                             topic = k.get("topic", "")
                             content = k.get("content", "")[:8000]
                             extra += f"\n--- Тема {i}: {topic} ---\n{content}\n"
-                        extra += "\nИспользуй контекст выше при ответе. Если контекст не релевантен — отвечай по своему знанию.\n"
+                        extra += "\nОБЯЗАТЕЛЬНО используй контекст выше при ответе. Если в контексте есть контактные данные — выведи их ПОЛНОСТЬЮ.\n"
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
         
+        logger.info(f"[KB DEBUG s3] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
         # AI-ассистент — без истории (чтобы не склеивались запросы)
         msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
         answer = await ask_deepseek(msgs)
