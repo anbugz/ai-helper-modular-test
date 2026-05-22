@@ -54,42 +54,50 @@ def parse_xlsx(file_obj) -> List[List[str]]:
     except KeyError:
         pass  # Нет shared strings
     
-    # Парсим sheet1.xml
-    try:
-        sheet_xml = z.read("xl/worksheets/sheet1.xml")
-    except KeyError:
-        logger.error("xl/worksheets/sheet1.xml не найден в .xlsx")
-        return []
-    
-    root = ET.fromstring(sheet_xml)
+    # Парсим ВСЕ листы (sheet1.xml, sheet2.xml, ...)
     ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     
-    rows = []
-    for row_elem in root.findall(f".//{{{ns}}}row"):
-        row_data = []
-        for cell in row_elem.findall(f"{{{ns}}}c"):
-            # Определяем тип ячейки
-            cell_type = cell.get("t", "")
-            v_elem = cell.find(f"{{{ns}}}v")
-            
-            if v_elem is not None and v_elem.text:
-                if cell_type == "s":
-                    # Shared string
-                    try:
-                        idx = int(v_elem.text)
-                        row_data.append(shared_strings[idx] if idx < len(shared_strings) else "")
-                    except (ValueError, IndexError):
+    def _parse_sheet(sheet_name):
+        """Парсит один лист и возвращает список строк."""
+        try:
+            sheet_xml = z.read(f"xl/worksheets/{sheet_name}")
+        except KeyError:
+            return []
+        root = ET.fromstring(sheet_xml)
+        sheet_rows = []
+        for row_elem in root.findall(f".//{{{ns}}}row"):
+            row_data = []
+            for cell in row_elem.findall(f"{{{ns}}}c"):
+                cell_type = cell.get("t", "")
+                v_elem = cell.find(f"{{{ns}}}v")
+                if v_elem is not None and v_elem.text:
+                    if cell_type == "s":
+                        try:
+                            idx = int(v_elem.text)
+                            row_data.append(shared_strings[idx] if idx < len(shared_strings) else "")
+                        except (ValueError, IndexError):
+                            row_data.append(v_elem.text)
+                    else:
                         row_data.append(v_elem.text)
                 else:
-                    row_data.append(v_elem.text)
-            else:
-                row_data.append("")
-        
-        if any(cell.strip() for cell in row_data):
-            rows.append(row_data)
+                    row_data.append("")
+            if any(cell.strip() for cell in row_data):
+                sheet_rows.append(row_data)
+        return sheet_rows
+    
+    # Находим все sheet*.xml файлы
+    all_rows = []
+    sheet_files = sorted([n for n in z.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")])
+    logger.info(f"XLSX sheets found: {sheet_files}")
+    
+    for sheet_file in sheet_files:
+        sheet_name = sheet_file.split("/")[-1]
+        sheet_rows = _parse_sheet(sheet_name)
+        logger.info(f"  {sheet_name}: {len(sheet_rows)} rows")
+        all_rows.extend(sheet_rows)
     
     z.close()
-    return rows
+    return all_rows
 
 
 def parse_txt(file_obj) -> str:
