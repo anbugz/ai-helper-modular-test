@@ -145,10 +145,43 @@ def is_radio_electronics(code: str) -> bool:
 # ------------------------------------------------------------------
 
 def extract_tnved_codes(text: str) -> List[str]:
-    """Извлекает коды ТН ВЭД (8-10 цифр) из текста, включая с пробелами (5208 43 000 0)."""
+    """Извлекает коды ТН ВЭД (8-10 цифр) из текста, включая с пробелами (5208 43 000 0).
+    Если полных кодов нет — ищет короткие (4-6 цифр) рядом со словом 'код' и подгружает
+    первый полный код из БД/кэша по префиксу.
+    """
     # Нормализуем: убираем пробелы между цифрами
     normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
-    return re.findall(r"\d{8,10}", normalized)
+    codes = re.findall(r"\d{8,10}", normalized)
+    
+    # Fallback: короткие коды (4-6 цифр) рядом с маркером "код/группа/подгруппа/раздел"
+    if not codes:
+        short_codes = re.findall(
+            r"(?:код|группа|подгруппа|раздел)\s*[:=]?\s*(\d{4,6})\b",
+            text.lower()
+        )
+        for sc in short_codes:
+            # Ищем в памяти
+            found = False
+            for row in _TNVED_ROWS_CACHE:
+                if not row or not isinstance(row[0], str):
+                    continue
+                full = row[0].replace(" ", "").strip()
+                if full.startswith(sc) and len(full) >= 8:
+                    codes.append(full)
+                    found = True
+                    break
+            if not found:
+                # Ищем в БД
+                import sqlite3
+                from config import DB_PATH
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("SELECT code FROM tnved_cache WHERE code LIKE ? LIMIT 1", (f"{sc}%",))
+                row = c.fetchone()
+                conn.close()
+                if row:
+                    codes.append(row[0])
+    return codes
 
 
 # ------------------------------------------------------------------
@@ -157,12 +190,12 @@ def extract_tnved_codes(text: str) -> List[str]:
 
 def calculate_customs_fee(value_rub: float) -> int:
     """Рассчитывает таможенный сбор по шкале ПП РФ №1637."""
-    from config import CUSTOMS_FEE_RUB, RADIO_FEE
+    from config import CUSTOMS_FEE_RUB
     
     for threshold, fee in sorted(CUSTOMS_FEE_RUB.items()):
         if value_rub <= threshold:
             return fee
-    return RADIO_FEE
+    return 100_000  # максимум по шкале (не радиосбор!)
 
 
 # ------------------------------------------------------------------
@@ -191,7 +224,7 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
             pass
     
     # Комбинированный: "15%, но не менее 0,2 евро/кг"
-    if "не менее" in t or "но менее" in t:
+    if "не менее" in t:
         eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "min", "formula": tariff_str, "value": eur_val}
@@ -209,19 +242,3 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
         return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
     
     return {"type": "", "formula": tariff_str, "value": 0}
-    
-    def extract_tnved_codes(text: str) -> List[str]:
-    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
-    codes = re.findall(r"\d{8,10}", normalized)
-    
-    # Если 10-значных нет, ищем 4-6-значные рядом со словом "код"
-    if not codes:
-        # Находим "код 5208", "группа 5208", "подгруппа 5208"
-        short = re.findall(r"(?:код|группа|подгруппа|раздел)\s*[:=]?\s*(\d{4,6})\b", text.lower())
-        for s in short:
-            # Ищем в БД полный 10-значный код по LIKE
-            from database import search_tnved_in_db
-            matches = search_tnved_in_db(s)
-            if matches:
-                codes.append(matches[0]["code"])
-    return codes
