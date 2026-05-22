@@ -65,6 +65,11 @@ def init_db() -> None:
             parsed_formula TEXT,
             loaded_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS blocked_users (
+            user_id INTEGER PRIMARY KEY,
+            blocked_at TEXT,
+            reason TEXT
+        );
         CREATE INDEX IF NOT EXISTS idx_tnved_name ON tnved_cache(name);
     """)
     conn.commit()
