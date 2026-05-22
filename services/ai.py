@@ -19,9 +19,15 @@ async def ask_deepseek(messages: List[Dict]) -> str:
             model="deepseek-chat",
             messages=messages,
             temperature=0.2,
-            max_tokens=1500,
+            max_tokens=3000,
         )
-        return response.choices[0].message.content or ""
+        answer = response.choices[0].message.content or ""
+        finish = response.choices[0].finish_reason
+        usage = response.usage
+        logger.info(f"[DeepSeek] finish_reason={finish}, tokens: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
+        if finish == "length":
+            answer += "\n\n⚠️ <i>Ответ был обрезан — слишком длинный. Уточните вопрос.</i>"
+        return answer
     except Exception as e:
         logger.error(f"DeepSeek API error: {e}")
         return f"⚠️ Ошибка при обращении к AI: {e}"
