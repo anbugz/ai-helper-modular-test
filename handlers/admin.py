@@ -27,9 +27,12 @@ async def cmd_brief(message: Message):
         await message.answer("⛔ Нет доступа.")
         return
     await message.answer(
-        "<b>BRIEF</b>\n"
-        "НДС: 22% базовая, 10% льготная.\n"
-        "Сбор: шкала ПП РФ №1637. Радио: 73 860 ₽.\n"
+        "<b>BRIEF</b>
+"
+        "НДС: 22% базовая, 10% льготная.
+"
+        "Сбор: шкала ПП РФ №1637. Радио: 73 860 ₽.
+"
         "Валюта: инвойс. Страховка: в ТС."
     )
 
@@ -47,8 +50,12 @@ async def cmd_topics(message: Message):
     if not topics:
         await message.answer("📭 Пусто.")
         return
-    lines = [f"{i+1}. {t['topic']}" for i, t in enumerate(topics)]
-    await message.answer("<b>Темы:</b>\n" + "\n".join(lines))
+    # Уникальные темы (без дублей секций)
+    unique_topics = sorted({t['topic'] for t in topics})
+    lines = [f"{i+1}. {t[:80]}" for i, t in enumerate(unique_topics)]
+    await message.answer("<b>Темы:</b>
+" + "
+".join(lines))
 
 
 # ------------------------------------------------------------------
@@ -71,7 +78,8 @@ async def cmd_learn(message: Message):
         "waiting_for": "content",
     }
     await message.answer(
-        f"📚 Режим обучения: {topic}\nПришли текст или файл. /done — выйти."
+        f"📚 Режим обучения: {topic}
+Пришли текст или файл. /done — выйти."
     )
 
 
@@ -89,16 +97,18 @@ async def cmd_done(message: Message):
     if not mode["content"]:
         await message.answer("❌ Нет контента.")
         return
-    
+
     # Разбиваем документ на секции по заголовкам
     from utils.text import split_document_to_sections
     sections = split_document_to_sections(mode["content"], default_topic=mode["topic"])
-    
+
     if len(sections) > 1:
         count = save_knowledge_sections(sections, message.from_user.username or str(uid))
-        topics_preview = "\n".join(f"  • {t[:60]}" for t, c in sections[:10])
+        topics_preview = "
+".join(f"  • {t[:60]}" for t, c in sections[:10])
         await message.answer(
-            f"✅ Документ «{mode['topic']}» разбит на {count} секций:\n{topics_preview}"
+            f"✅ Документ «{mode['topic']}» разбит на {count} секций:
+{topics_preview}"
         )
     else:
         save_knowledge(
@@ -151,7 +161,7 @@ async def cmd_log(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Нет доступа.")
         return
-    
+
     # Парсим диапазон дат из текста
     df, dt = parse_date_range(message.text)
     logs = get_dialogs_for_export(df, dt)
