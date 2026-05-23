@@ -27,11 +27,11 @@ _JAILBREAK_PATTERNS = [
 ]
 
 _PII_PATTERNS = {
-    "phone": r"\+?7[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}",
-    "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-    "passport": r"\d{4}\s?\d{6}",
-    "inn": r"\d{12}",
-    "snils": r"\d{3}\s?\d{3}\s?\d{3}\s?\d{2}",
+    "phone": r"\b\+?7[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b",
+    "email": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    "passport": r"\b\d{4}\s?\d{6}\b(?!\d)",
+    "inn": r"\b\d{12}\b",
+    "snils": r"\b\d{3}[-\s]?\d{3}[-\s]?\d{3}[-\s]?\d{2}\b",
 }
 
 _SUSPICIOUS_THRESHOLD = 3  # количество подозрительных запросов для бана
@@ -41,7 +41,7 @@ _suspicious_counts: Dict[int, int] = {}
 def full_security_scan(text: str, user_id: int) -> Tuple[bool, str]:
     """
     Полное сканирование сообщения.
-    
+
     Returns:
         (is_attack, reason): is_attack=True если сообщение отклонено
         reason: строка с причиной ("JAILBREAK", "SUSPICIOUS", "USER_BLOCKED", "")
@@ -49,9 +49,9 @@ def full_security_scan(text: str, user_id: int) -> Tuple[bool, str]:
     # Проверяем, не заблокирован ли пользователь
     if is_blocked(user_id):
         return True, "USER_BLOCKED"
-    
+
     text_lower = text.lower()
-    
+
     # Проверка jailbreak
     for pattern in _JAILBREAK_PATTERNS:
         if re.search(pattern, text_lower):
@@ -61,7 +61,7 @@ def full_security_scan(text: str, user_id: int) -> Tuple[bool, str]:
                 logger.warning(f"User {user_id} blocked for jailbreak attempts")
                 return True, "JAILBREAK_BLOCKED"
             return True, "JAILBREAK"
-    
+
     return False, ""
 
 

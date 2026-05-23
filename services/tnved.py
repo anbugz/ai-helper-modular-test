@@ -115,6 +115,8 @@ def _row_to_tnved_dict(row: List[str]) -> dict:
 # Радиоэлектроника
 # ------------------------------------------------------------------
 
+RADIO_GROUPS_ALWAYS = {"84", "85", "90", "91", "95"}
+
 def is_radio_electronics(code: str) -> bool:
     """Проверяет по списку + по первым 2 цифрам группы.
     Для коротких шаблонов (≤9 цифр) — startswith (группы/подгруппы).
@@ -123,11 +125,11 @@ def is_radio_electronics(code: str) -> bool:
     if not code:
         return False
     c = code.replace(" ", "").replace(".", "").strip()
-    # Группа 85 (телефоны, смартфоны) — всегда радиоэлектроника
-    if len(c) >= 2 and c[:2] == "85":
+
+    # Группы 84, 85, 90, 91, 95 — всегда радиоэлектроника
+    if len(c) >= 2 and c[:2] in RADIO_GROUPS_ALWAYS:
         return True
-    if len(c) >= 2 and c[:2] not in _RADIO_GROUPS:
-        return False
+
     for pattern in RADIO_ELECTRONICS_CODES_SET:
         if len(pattern) <= 9:
             # Короткие паттерны (4-9 знаков) = группа/подгруппа/позиция → startswith
@@ -150,13 +152,13 @@ def extract_tnved_codes(text: str) -> List[str]:
     первый полный код из БД/кэша по префиксу.
     """
     # Нормализуем: убираем пробелы между цифрами
-    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
+    normalized = re.sub(r'(\d)\s+(?=\d)', r'', text)
     codes = re.findall(r"\d{8,10}", normalized)
-    
+
     # Fallback: короткие коды (4-6 цифр) рядом с маркером "код/группа/подгруппа/раздел"
     if not codes:
         short_codes = re.findall(
-            r"(?:код|группа|подгруппа|раздел)\s*[:=]?\s*(\d{4,6})\b",
+            r"(?:код|группа|подгруппа|раздел)\s*[:=]?\s*(\d{4,6})",
             text.lower()
         )
         for sc in short_codes:
@@ -171,12 +173,12 @@ def extract_tnved_codes(text: str) -> List[str]:
                     found = True
                     break
             if not found:
-                # Ищем в БД
+                # Ищем в БД с ORDER BY для предсказуемости
                 import sqlite3
                 from config import DB_PATH
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
-                c.execute("SELECT code FROM tnved_cache WHERE code LIKE ? LIMIT 1", (f"{sc}%",))
+                c.execute("SELECT code FROM tnved_cache WHERE code LIKE ? ORDER BY code LIMIT 1", (f"{sc}%",))
                 row = c.fetchone()
                 conn.close()
                 if row:
@@ -189,7 +191,9 @@ def extract_tnved_codes(text: str) -> List[str]:
 # ------------------------------------------------------------------
 
 def calculate_customs_fee(value_rub: float) -> int:
+    """Рассчитывает таможенный сбор по шкале ПП РФ №1637."""
     from config import CUSTOMS_FEE_RUB
+
     for threshold, fee in sorted(CUSTOMS_FEE_RUB.items()):
         if value_rub <= threshold:
             return fee
@@ -202,7 +206,7 @@ def calculate_customs_fee(value_rub: float) -> int:
 
 def parse_tnved_tariff(tariff_str: str) -> dict:
     """Парсит строку тарифа ТН ВЭД в структурированный формат.
-    
+
     Returns:
         {"type": "percent"/"min"/"plus"/"fixed_eur"/"", 
          "formula": "оригинальная строка",
@@ -211,7 +215,7 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
     t = (tariff_str or "").strip().lower()
     if not t:
         return {"type": "", "formula": "", "value": 0}
-    
+
     # Процент: "15%", "5 %"
     pct_match = re.search(r'(\d+(?:[.,]\d+)?)\s*%', t)
     if pct_match:
@@ -220,23 +224,23 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
             return {"type": "percent", "formula": tariff_str, "value": val}
         except ValueError:
             pass
-    
+
     # Комбинированный: "15%, но не менее 0,2 евро/кг"
     if "не менее" in t:
         eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "min", "formula": tariff_str, "value": eur_val}
-    
+
     # Комбинированный с плюсом: "10% + 0,5 евро/кг"
     if "+" in t and "евро" in t:
         eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "plus", "formula": tariff_str, "value": eur_val}
-    
+
     # Фиксированный евро: "0,3 евро/кг"
     if "евро" in t:
         eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
-    
+
     return {"type": "", "formula": tariff_str, "value": 0}
