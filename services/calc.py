@@ -94,7 +94,54 @@ def format_calculation_fallback(
             lines.append(f"⚡ <b>Сбор:</b> {customs_fee_rub:,.0f} ₽ (по шкале ПП РФ №1637)")
     
     lines.append("")
-    
+
+    # === 1.5. БЛОК ВЫБОРА СТАВКИ ПОШЛИНЫ ===
+    # Показываем только если есть евро-компонент (min/plus/fixed_eur) и вес
+    if tariff_info:
+        pt_preview = tariff_info.get("parsed_tariff", {})
+        tt_preview = pt_preview.get("type", "")
+        epk_preview = pt_preview.get("eur_per_kg", 0)
+
+        if tt_preview in ("min", "plus", "fixed_eur") and epk_preview and weight_kg:
+            # Считаем обе части для предпросмотра (конвертация та же что в итоговом блоке)
+            ad_preview = ts_fallback * (pt_preview.get("value", 0) / 100) if ts_fallback else 0
+            eur_amt_preview = epk_preview * weight_kg
+            eur_cur_preview = 0.0
+            if currency == "EUR":
+                eur_cur_preview = eur_amt_preview
+            elif "EUR" in rates and currency in rates:
+                try:
+                    eur_cur_preview = round(eur_amt_preview * float(rates["EUR"]) / float(rates[currency]), 2)
+                except (ValueError, TypeError, ZeroDivisionError):
+                    eur_cur_preview = eur_amt_preview
+            elif "EUR" in rates:
+                try:
+                    eur_cur_preview = round(eur_amt_preview * float(rates["EUR"]), 2)
+                except (ValueError, TypeError):
+                    eur_cur_preview = eur_amt_preview
+
+            if tt_preview == "min":
+                adval_wins = ad_preview >= eur_cur_preview
+                lines.append("📐 <b>Выбор ставки пошлины</b> (берём бо́льшую из двух):")
+                adval_mark = " ✅" if adval_wins else ""
+                eur_mark   = " ✅" if not adval_wins else ""
+                pct_display = int(pt_preview.get("value", 0))
+                lines.append(f"   • Адвалорная {pct_display}%:{adval_mark:>3}  {ad_preview:>10,.2f} {currency}")
+                lines.append(f"   • Евро/кг {epk_preview}×{weight_kg:.0f} кг:{eur_mark:>2}  {eur_cur_preview:>10,.2f} {currency}")
+                lines.append("")
+
+            elif tt_preview == "plus":
+                lines.append("📐 <b>Состав пошлины</b> (адвалорная + евро/кг):")
+                pct_display = int(pt_preview.get("value", 0))
+                lines.append(f"   • Адвалорная {pct_display}%:      {ad_preview:>10,.2f} {currency}")
+                lines.append(f"   • Евро/кг {epk_preview}×{weight_kg:.0f} кг:   {eur_cur_preview:>10,.2f} {currency}")
+                lines.append("")
+
+            elif tt_preview == "fixed_eur":
+                lines.append("📐 <b>Ставка пошлины</b> (фиксированная, евро/кг):")
+                lines.append(f"   • {epk_preview} €/кг × {weight_kg:.0f} кг = {eur_amt_preview:.2f} EUR → {eur_cur_preview:,.2f} {currency} ✅")
+                lines.append("")
+
     # === 2. КОНВЕРТАЦИЯ В ВАЛЮТУ ИНВОЙСА ===
     lines.append(f"🔄 <b>Конвертация в валюту инвойса ({currency}):</b>")
     
