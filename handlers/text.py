@@ -468,6 +468,12 @@ async def handle_text(message: Message):
             )
             # Продолжение темы, только если бот недавно подбирал И нет признаков нового запроса
             recently_picking = bool(bot_was_picking and not has_new_intent)
+            logger.info(
+                f"[CTX DEBUG] bot_was_picking={bot_was_picking}, "
+                f"materials_now={_materials_now}, has_new_material={_has_new_material}, "
+                f"has_new_intent={has_new_intent}, recently_picking={recently_picking}, "
+                f"prev_bot_len={len(_prev_bot)}, hist_len={len(_prev)}"
+            )
         except Exception as e:
             logger.warning(f"Не удалось проверить контекст диалога: {e}")
 
