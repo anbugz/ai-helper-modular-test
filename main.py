@@ -17,32 +17,24 @@ from services.tnved import restore_tnved_from_db
 
 async def main():
     logger.info(f"=== West Asia AI Helper v{VERSION} (modular) ===")
-
+    
     # Инициализация БД
     init_db()
-
+    
     # Восстановление кэша ТН ВЭД из БД
     restore_tnved_from_db()
-
-    # Восстановление кастомных кодов радиоэлектроники из БД
-    from database import get_all_custom_radio_codes
-    from config import RADIO_ELECTRONICS_CODES_SET
-    loaded_radio = get_all_custom_radio_codes()
-    if loaded_radio:
-        RADIO_ELECTRONICS_CODES_SET.update(loaded_radio)
-        logger.info(f"RADIO: загружено {len(loaded_radio)} кастомных кодов из БД")
-
+    
     # Регистрация хэндлеров
     from handlers import commands, admin, documents, voice, text
-
+    
     dp.include_router(commands.router)
     dp.include_router(admin.router)
     dp.include_router(documents.router)
     dp.include_router(voice.router)
     dp.include_router(text.router)
-
+    
     logger.info("Хэндлеры зарегистрированы. Запуск polling...")
-
+    
     # Запуск бота
     await dp.start_polling(bot)
 

@@ -9,8 +9,7 @@ from services.currency import convert_fee_to_currency
 
 def _strip_deepseek_dup(text: str) -> str:
     """Удаляет дублирование ответов DeepSeek."""
-    lines = text.split("
-")
+    lines = text.split("\n")
     seen = set()
     result = []
     for line in lines:
@@ -19,14 +18,12 @@ def _strip_deepseek_dup(text: str) -> str:
             continue
         seen.add(key)
         result.append(line)
-    return "
-".join(result)
+    return "\n".join(result)
 
 
 def _strip_ai_assistant_junk(text: str) -> str:
     """Очищает ответ от markdown-таблиц и служебных фраз."""
-    lines = text.split("
-")
+    lines = text.split("\n")
     clean_lines = []
     in_table = False
     for line in lines:
@@ -38,17 +35,12 @@ def _strip_ai_assistant_junk(text: str) -> str:
         if in_table and "|" not in line:
             in_table = False
         clean_lines.append(line)
-    text = "
-".join(clean_lines)
+    text = "\n".join(clean_lines)
     junk_phrases = [
-        r"As an AI.*?(
-|$)",
-        r"Я — искусственный интеллект.*?(
-|$)",
-        r"I apologize, but.*?(
-|$)",
-        r"Прошу прощения.*?(
-|$)",
+        r"As an AI.*?(\n|$)",
+        r"Я — искусственный интеллект.*?(\n|$)",
+        r"I apologize, but.*?(\n|$)",
+        r"Прошу прощения.*?(\n|$)",
     ]
     for phrase in junk_phrases:
         text = re.sub(phrase, "", text, flags=re.IGNORECASE)
@@ -75,12 +67,12 @@ def format_calculation_fallback(
     3. Итоговая таблица с ИТОГО
     """
     lines = []
-
+    
     # === 1. ШАПКА ===
     lines.append(f"📋 Код: <code>{code}</code>")
     if name:
         lines.append(f"🔧 {name}")
-
+    
     if tariff_info:
         pt = tariff_info.get("parsed_tariff", {})
         tariff_str = tariff_info.get("tariff", "")
@@ -90,22 +82,22 @@ def format_calculation_fallback(
             lines.append(f"💰 <b>Пошлина:</b> {tariff_str} — комбинированная ({pt.get('formula', '')})")
         else:
             lines.append(f"💰 <b>Пошлина:</b> {tariff_str}")
-
+    
     vat_pct = int(vat_rate * 100)
     lines.append(f"🧾 <b>НДС:</b> {vat_pct}% (базовая)")
-
+    
     # Сбор в рублях (как в старом боте)
     if customs_fee_rub:
         if is_radio:
             lines.append(f"⚡ <b>РАДИОСБОР:</b> {customs_fee_rub:,.0f} ₽ (фиксированный)")
         else:
             lines.append(f"⚡ <b>Сбор:</b> {customs_fee_rub:,.0f} ₽ (по шкале ПП РФ №1637)")
-
+    
     lines.append("")
-
+    
     # === 2. КОНВЕРТАЦИЯ В ВАЛЮТУ ИНВОЙСА ===
     lines.append(f"🔄 <b>Конвертация в валюту инвойса ({currency}):</b>")
-
+    
     # Инвойс
     if "invoice" in ts_components:
         inv = ts_components["invoice"]
@@ -114,65 +106,43 @@ def format_calculation_fallback(
         if cur == currency:
             lines.append(f"• Инвойс: {val:,.2f} {currency} — уже в валюте инвойса")
         else:
+            conv = inv.get("converted", val)
             rate_info = inv.get("rate", "")
-            if rate_info:
-                lines.append(f"• Инвойс: {rate_info}")
-            else:
-                conv = inv.get("converted", val)
-                lines.append(f"• Инвойс: {val:,.2f} {cur} → {conv:,.2f} {currency}")
-
+            lines.append(f"• Инвойс: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+    
     # Фрахт
     if "freight" in ts_components:
         fr = ts_components["freight"]
         val = fr.get("value", 0)
         cur = fr.get("currency", currency)
+        conv = fr.get("converted", val)
         rate_info = fr.get("rate", "")
-        if rate_info:
-            lines.append(f"• Фрахт: {rate_info}")
+        if cur == currency:
+            lines.append(f"• Фрахт: {val:,.2f} {currency}")
         else:
-            conv = fr.get("converted", val)
-            if cur == currency:
-                lines.append(f"• Фрахт: {val:,.2f} {currency}")
-            else:
-                lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency}")
-
+            lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+    
     # Страховка
     if "insurance" in ts_components:
         ins = ts_components["insurance"]
         val = ins.get("value", 0)
         cur = ins.get("currency", currency)
+        conv = ins.get("converted", val)
         rate_info = ins.get("rate", "")
-        if rate_info:
-            lines.append(f"• Страховка: {rate_info}")
+        if cur == currency:
+            lines.append(f"• Страховка: {val:,.2f} {currency}")
         else:
-            conv = ins.get("converted", val)
-            if cur == currency:
-                lines.append(f"• Страховка: {val:,.2f} {currency}")
-            else:
-                lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency}")
-
+            lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+    
     lines.append("")
-
+    
     # === 3. ИТОГОВЫЙ РАСЧЁТ (таблица) ===
     if ts_fallback and tariff_info:
         pt = tariff_info.get("parsed_tariff", {})
         duty_pct = pt.get("value", 0) / 100 if pt.get("type") == "percent" else 0
         duty_val = ts_fallback * duty_pct
-
-        # Комбинированный тариф: max(%, евро/кг)
-        if pt.get("type") in ("min", "plus", "fixed_eur") and weight_kg and rates:
-            try:
-                eur_rate = float(rates.get("EUR", 0))
-                if eur_rate > 0:
-                    specific_rub = pt.get("value", 0) * eur_rate * weight_kg
-                    duty_val = max(duty_val, specific_rub)
-                    if specific_rub > duty_val:
-                        lines.append(f"📌 <i>Пошлина по евро/кг: {specific_rub:,.2f} ₽ (вес {weight_kg} кг)</i>")
-            except (ValueError, TypeError):
-                pass
-
         vat_val = (ts_fallback + duty_val) * vat_rate
-
+        
         # Сбор сконвертированный в валюту инвойса
         fee_in_cur = 0.0
         fee_display = ""
@@ -180,9 +150,9 @@ def format_calculation_fallback(
             fee_in_cur, fee_display = convert_fee_to_currency(
                 customs_fee_rub, currency or "RUB", rates
             )
-
+        
         total_cur = duty_val + vat_val + fee_in_cur
-
+        
         # Итого в рублях
         total_rub = 0.0
         if currency in rates:
@@ -191,12 +161,12 @@ def format_calculation_fallback(
                 total_rub = total_cur * rate_val
             except (ValueError, TypeError):
                 pass
-
+        
         lines.append("📊 <b>Итоговый расчёт</b>")
         lines.append(f"💰 Таможенная стоимость:  {ts_fallback:>12,.2f} {currency}")
         lines.append(f"💰 Пошлина {int(duty_pct * 100)}%:{'':>14} {duty_val:>12,.2f} {currency}")
         lines.append(f"🧾 НДС {vat_pct}%:{'':>17} {vat_val:>12,.2f} {currency}")
-
+        
         if fee_in_cur > 0:
             fee_str = f"{fee_in_cur:>12,.2f} {currency}"
             if "→" in fee_display:
@@ -205,19 +175,18 @@ def format_calculation_fallback(
             fee_label = "РАДИОСБОР" if is_radio else "Сбор"
             padding = 22 - len(fee_label)
             lines.append(f"⚡ {fee_label}:{'':>{padding}} {fee_str}")
-
+        
         lines.append("—" * 35)
-
+        
         row_total = f"<b>ИТОГО:</b>{'':>18} {total_cur:>12,.2f} {currency}"
         if total_rub > 0:
             row_total += f" (~ {total_rub:>12,.2f} ₽)"
         lines.append(f"💰 {row_total}")
-
+    
     lines.append("")
     lines.append("📌 <i>Точную информацию уточняйте у декларанта.</i>")
-
-    return "
-".join(lines)
+    
+    return "\n".join(lines)
 
 
 # Aliases для совместимости

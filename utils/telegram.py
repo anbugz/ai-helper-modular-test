@@ -2,13 +2,12 @@
 utils/telegram.py — работа с Telegram API: отправка сообщений, rate limit.
 Перенос из utils.py.
 """
-import re
 import asyncio
 from datetime import datetime
 from typing import Dict
 from aiogram.types import Message
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.exceptions import TelegramBadRequest
 from config import RATE_LIMIT_SECONDS, logger
 
 
@@ -62,49 +61,20 @@ def _split_smart(text: str, chunk: int = 3800) -> list:
     return parts
 
 
-async def _send_with_retry(message: Message, part: str, parse_mode, retries: int = 2) -> None:
-    """Отправляет часть с повтором при сетевой ошибке."""
-    for attempt in range(retries):
-        try:
-            await message.answer(part, parse_mode=parse_mode)
-            return
-        except TelegramNetworkError:
-            if attempt < retries - 1:
-                logger.warning(f"Network error, retry {attempt + 1}/{retries}")
-                await asyncio.sleep(2)
-            else:
-                raise
-
-
 async def safe_send(message: Message, text: str, chunk: int = 3800) -> None:
     """Безопасно отправляет текст, разбивая на части при необходимости.
     
     При ошибке парсинга HTML — отправляет как plain text.
-    При сетевой ошибке — повторяет отправку до 2 раз.
     """
     try:
         parts = _split_smart(text, chunk)
         for part in parts:
-            await _send_with_retry(message, part, ParseMode.HTML)
-            await asyncio.sleep(0.5)
-    except TelegramNetworkError as e:
-        logger.error(f"Network error after retries, sending as plain text: {e}")
-        # Фallback: убираем HTML и пробуем ещё раз
-        plain = text.replace("<b>", "").replace("</b>", "")
-        plain = plain.replace("<i>", "").replace("</i>", "")
-        plain = plain.replace("<code>", "").replace("</code>", "")
-        plain = plain.replace("<pre>", "").replace("</pre>", "")
-        plain = plain.replace("<a href=", "[").replace("</a>", "]")
-        parts = _split_smart(plain, chunk)
-        for part in parts:
-            try:
-                await message.answer(part, parse_mode=None)
-                await asyncio.sleep(0.5)
-            except Exception:
-                break
+            await message.answer(part, parse_mode=ParseMode.HTML)
+            await asyncio.sleep(0.3)
     except TelegramBadRequest as e:
         err = str(e).lower()
         if "parse" in err or "tag" in err or "entity" in err:
+            # Убираем HTML-теги и отправляем как plain text
             plain = text.replace("<b>", "").replace("</b>", "")
             plain = plain.replace("<i>", "").replace("</i>", "")
             plain = plain.replace("<code>", "").replace("</code>", "")
@@ -113,7 +83,7 @@ async def safe_send(message: Message, text: str, chunk: int = 3800) -> None:
             parts = _split_smart(plain, chunk)
             for part in parts:
                 await message.answer(part, parse_mode=None)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
         else:
             raise
 
