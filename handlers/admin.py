@@ -63,9 +63,9 @@ async def cmd_topics(message: Message):
     )
     if len(text) > 3800:
         for i in range(0, len(lines), 40):
-            await message.answer("\n".join(lines[i:i+40]))
+            await message.answer("\n".join(lines[i:i+40]), parse_mode="HTML")
     else:
-        await message.answer(text)
+        await message.answer(text, parse_mode="HTML")
 
 
 # ------------------------------------------------------------------
