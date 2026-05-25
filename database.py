@@ -65,7 +65,8 @@ def init_db() -> None:
             questions TEXT,
             added_by TEXT,
             created_at TEXT,
-            embedding BLOB DEFAULT NULL
+            embedding BLOB DEFAULT NULL,
+            source_doc TEXT DEFAULT NULL
         );
         CREATE TABLE IF NOT EXISTS tnved_cache (
             code TEXT PRIMARY KEY,
@@ -77,12 +78,16 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_tnved_name ON tnved_cache(name);
     """)
-    # Миграция: добавляем колонку embedding если её нет (для существующих БД)
-    try:
-        c.execute("ALTER TABLE knowledge_base ADD COLUMN embedding BLOB DEFAULT NULL")
-        logger.info("[DB] Добавлена колонка embedding в knowledge_base")
-    except Exception:
-        pass  # Колонка уже есть
+    # Миграция: добавляем колонки если их нет (для существующих БД)
+    for col, definition in [
+        ("embedding", "BLOB DEFAULT NULL"),
+        ("source_doc", "TEXT DEFAULT NULL"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE knowledge_base ADD COLUMN {col} {definition}")
+            logger.info(f"[DB] Добавлена колонка {col} в knowledge_base")
+        except Exception:
+            pass  # Колонка уже есть
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -175,13 +180,13 @@ def get_all_corrections() -> List[Tuple]:
 # База знаний
 # ------------------------------------------------------------------
 
-def save_knowledge(topic: str, content: str, questions: str, added_by: str, embedding: bytes = None) -> int:
+def save_knowledge(topic: str, content: str, questions: str, added_by: str, embedding: bytes = None, source_doc: str = None) -> int:
     """Сохраняет запись в БЗ. Возвращает ID новой записи."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)",
-        (topic, content, questions, added_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), embedding),
+        "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding, source_doc) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (topic, content, questions, added_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), embedding, source_doc),
     )
     record_id = c.lastrowid
     conn.commit()
@@ -198,14 +203,8 @@ def update_knowledge_embedding(record_id: int, embedding: bytes) -> None:
     conn.close()
 
 
-def save_knowledge_sections(sections: list, added_by: str, embeddings: list = None) -> int:
-    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых.
-
-    Args:
-        sections: [(topic, content), ...]
-        added_by: кто добавил
-        embeddings: список bytes (embedding для каждой секции) или None
-    """
+def save_knowledge_sections(sections: list, added_by: str, embeddings: list = None, source_doc: str = None) -> int:
+    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     count = 0
@@ -214,8 +213,8 @@ def save_knowledge_sections(sections: list, added_by: str, embeddings: list = No
         if content.strip():
             emb = embeddings[i] if embeddings and i < len(embeddings) else None
             c.execute(
-                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)",
-                (topic[:255], content, "", added_by, now, emb),
+                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding, source_doc) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (topic[:255], content, "", added_by, now, emb, source_doc),
             )
             count += 1
     conn.commit()
@@ -841,3 +840,73 @@ def get_knowledge_without_embeddings() -> List[Dict]:
     rows = c.fetchall()
     conn.close()
     return [{"id": r[0], "topic": r[1], "content": r[2]} for r in rows]
+
+
+def get_knowledge_grouped() -> List[Dict]:
+    """Возвращает записи БЗ сгруппированные по source_doc для /topics.
+
+    Документы с секциями показываются как одна строка (имя документа + кол-во секций).
+    Одиночные записи (--whole) показываются как есть.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, topic, source_doc, created_at FROM knowledge_base ORDER BY created_at, id"
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    # Группируем по source_doc
+    groups: dict = {}       # source_doc → [records]
+    no_source: list = []    # записи без source_doc (одиночные --whole)
+
+    for record_id, topic, source_doc, created_at in rows:
+        if source_doc:
+            if source_doc not in groups:
+                groups[source_doc] = []
+            groups[source_doc].append({"id": record_id, "topic": topic})
+        else:
+            no_source.append({"id": record_id, "topic": topic, "source_doc": None})
+
+    result = []
+    # Одиночные записи
+    for rec in no_source:
+        result.append({
+            "display": f"📄 {rec['topic'][:70]}",
+            "id": rec["id"],
+            "ids": [rec["id"]],
+            "is_group": False,
+        })
+    # Сгруппированные документы
+    for source_doc, records in groups.items():
+        ids = [r["id"] for r in records]
+        result.append({
+            "display": f"📁 {source_doc[:70]} ({len(records)} секций)",
+            "id": ids[0],   # первый ID для удаления группой
+            "ids": ids,
+            "is_group": True,
+        })
+
+    return result
+
+
+def delete_knowledge_by_source(source_doc: str) -> int:
+    """Удаляет все секции документа по source_doc. Возвращает кол-во удалённых."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM knowledge_base WHERE source_doc = ?", (source_doc,))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def clear_knowledge_base() -> int:
+    """Удаляет все записи из базы знаний. Возвращает кол-во удалённых."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM knowledge_base")
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
