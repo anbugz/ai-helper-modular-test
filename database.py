@@ -64,7 +64,8 @@ def init_db() -> None:
             content TEXT,
             questions TEXT,
             added_by TEXT,
-            created_at TEXT
+            created_at TEXT,
+            embedding BLOB DEFAULT NULL
         );
         CREATE TABLE IF NOT EXISTS tnved_cache (
             code TEXT PRIMARY KEY,
@@ -76,6 +77,12 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_tnved_name ON tnved_cache(name);
     """)
+    # Миграция: добавляем колонку embedding если её нет (для существующих БД)
+    try:
+        c.execute("ALTER TABLE knowledge_base ADD COLUMN embedding BLOB DEFAULT NULL")
+        logger.info("[DB] Добавлена колонка embedding в knowledge_base")
+    except Exception:
+        pass  # Колонка уже есть
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -168,28 +175,47 @@ def get_all_corrections() -> List[Tuple]:
 # База знаний
 # ------------------------------------------------------------------
 
-def save_knowledge(topic: str, content: str, questions: str, added_by: str) -> None:
+def save_knowledge(topic: str, content: str, questions: str, added_by: str, embedding: bytes = None) -> int:
+    """Сохраняет запись в БЗ. Возвращает ID новой записи."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
-        (topic, content, questions, added_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
+        "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+        (topic, content, questions, added_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), embedding),
     )
+    record_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return record_id
+
+
+def update_knowledge_embedding(record_id: int, embedding: bytes) -> None:
+    """Обновляет embedding для существующей записи."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE knowledge_base SET embedding = ? WHERE id = ?", (embedding, record_id))
     conn.commit()
     conn.close()
 
 
-def save_knowledge_sections(sections: list, added_by: str) -> int:
-    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых."""
+def save_knowledge_sections(sections: list, added_by: str, embeddings: list = None) -> int:
+    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых.
+
+    Args:
+        sections: [(topic, content), ...]
+        added_by: кто добавил
+        embeddings: список bytes (embedding для каждой секции) или None
+    """
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     count = 0
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    for topic, content in sections:
+    for i, (topic, content) in enumerate(sections):
         if content.strip():
+            emb = embeddings[i] if embeddings and i < len(embeddings) else None
             c.execute(
-                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
-                (topic[:255], content, "", added_by, now),
+                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+                (topic[:255], content, "", added_by, now, emb),
             )
             count += 1
     conn.commit()
@@ -681,3 +707,137 @@ def search_tnved_by_sections(sections: List[str]) -> List[Dict]:
 
     conn.close()
     return results
+
+
+# ------------------------------------------------------------------
+# База знаний — дополнительные функции
+# ------------------------------------------------------------------
+
+def delete_knowledge_by_id(record_id: int) -> bool:
+    """Удаляет запись из БЗ по ID. Возвращает True если удалена."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM knowledge_base WHERE id = ?", (record_id,))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def delete_knowledge_by_topic(topic: str) -> int:
+    """Удаляет все записи с совпадением темы (частичное). Возвращает кол-во удалённых."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM knowledge_base WHERE topic LIKE ?", (f"%{topic}%",))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def get_all_knowledge_with_ids() -> List[Dict]:
+    """Возвращает все записи БЗ с ID (для /topics и /forget)."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, topic, content, added_by, created_at FROM knowledge_base ORDER BY id")
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "topic": r[1], "content": r[2], "added_by": r[3], "created_at": r[4]}
+        for r in rows
+    ]
+
+
+def search_knowledge(query_words: set, top_n: int = 3) -> List[Dict]:
+    """Умный поиск по БЗ: возвращает top_n самых релевантных записей.
+
+    Алгоритм:
+    - Совпадение слова с темой записи: +10 очков
+    - Совпадение слова с контентом: +2 очка
+    - Бонус: тема содержит ВСЕ слова запроса: +20
+    """
+    all_kb = get_all_knowledge_with_ids()
+    scored = []
+    query_list = list(query_words)
+
+    for k in all_kb:
+        topic_lower = k["topic"].lower()
+        content_lower = k["content"].lower()
+        score = 0
+
+        for w in query_list:
+            if w in topic_lower:
+                score += 10
+            if w in content_lower:
+                score += 2
+
+        # Бонус если тема содержит ВСЕ слова
+        if all(w in topic_lower for w in query_list):
+            score += 20
+
+        if score > 0:
+            scored.append((score, k))
+
+    scored.sort(key=lambda x: -x[0])
+    return [k for _, k in scored[:top_n]]
+
+
+def vector_search(query_vector: List[float], top_n: int = 3, min_score: float = 0.3) -> List[Dict]:
+    """Семантический поиск по базе знаний через косинусное сходство.
+
+    Для записей без embedding автоматически делает fallback на keyword-поиск.
+
+    Args:
+        query_vector: вектор запроса (от get_embedding)
+        top_n: сколько записей вернуть
+        min_score: минимальный порог сходства (0.3 = умеренно похожие)
+
+    Returns:
+        Список записей sorted по релевантности (самые похожие первые)
+    """
+    from services.embeddings import cosine_similarity, blob_to_embedding
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, topic, content, embedding FROM knowledge_base")
+    rows = c.fetchall()
+    conn.close()
+
+    scored = []
+    no_embedding = []
+
+    for row in rows:
+        record_id, topic, content, emb_blob = row
+        if emb_blob:
+            vec = blob_to_embedding(emb_blob)
+            if vec:
+                score = cosine_similarity(query_vector, vec)
+                if score >= min_score:
+                    scored.append((score, {"id": record_id, "topic": topic, "content": content}))
+        else:
+            # Запись без embedding — попадёт в fallback
+            no_embedding.append({"id": record_id, "topic": topic, "content": content})
+
+    scored.sort(key=lambda x: -x[0])
+    results = [k for _, k in scored[:top_n]]
+
+    # Логируем если есть записи без embedding
+    if no_embedding:
+        logger.warning(
+            f"[VectorSearch] {len(no_embedding)} записей без embedding — "
+            f"используй /reindex для их векторизации"
+        )
+
+    return results
+
+
+def get_knowledge_without_embeddings() -> List[Dict]:
+    """Возвращает записи БЗ у которых нет embedding (для переиндексации)."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, topic, content FROM knowledge_base WHERE embedding IS NULL"
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "topic": r[1], "content": r[2]} for r in rows]
