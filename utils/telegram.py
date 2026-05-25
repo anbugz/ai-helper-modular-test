@@ -2,8 +2,9 @@
 utils/telegram.py — работа с Telegram API: отправка сообщений, rate limit.
 Перенос из utils.py.
 """
+import re
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict
 from aiogram.types import Message
 from aiogram.enums import ParseMode
@@ -63,9 +64,12 @@ def _split_smart(text: str, chunk: int = 3800) -> list:
 
 async def safe_send(message: Message, text: str, chunk: int = 3800) -> None:
     """Безопасно отправляет текст, разбивая на части при необходимости.
-    
+
+    Конвертирует Markdown (от DeepSeek) в HTML перед отправкой.
     При ошибке парсинга HTML — отправляет как plain text.
     """
+    from utils.text import markdown_to_html
+    text = markdown_to_html(text)
     try:
         parts = _split_smart(text, chunk)
         for part in parts:
@@ -100,10 +104,10 @@ def parse_date_range(text: str) -> tuple:
         today = now.strftime("%Y-%m-%d")
         return today, today
     if "вчера" in text_lower:
-        yest = (now - __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+        yest = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         return yest, yest
     if "неделю" in text_lower or "за неделю" in text_lower:
-        start = (now - __import__('datetime').timedelta(days=7)).strftime("%Y-%m-%d")
+        start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
         return start, now.strftime("%Y-%m-%d")
     dates = re.findall(r"(\d{2})[.](\d{2})[.](\d{4})", text)
     if len(dates) >= 2:
