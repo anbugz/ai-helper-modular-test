@@ -82,12 +82,16 @@ async def cmd_forget(message: Message):
     if arg.isdigit():
         ok = delete_knowledge_by_id(int(arg))
         if ok:
+            from services.search import invalidate_index
+            invalidate_index()
             await message.answer(f"✅ Запись #{arg} удалена.")
         else:
             await message.answer(f"❌ Запись #{arg} не найдена.")
     else:
         count = delete_knowledge_by_topic(arg)
         if count:
+            from services.search import invalidate_index
+            invalidate_index()
             await message.answer(f"✅ Удалено {count} записей с темой содержащей «{arg}».")
         else:
             await message.answer(f"❌ Записей с «{arg}» в теме не найдено.")
@@ -141,24 +145,18 @@ async def cmd_done(message: Message):
         await message.answer("❌ Нет контента.")
         return
 
-    from services.embeddings import get_embedding, embedding_to_blob
+    from services.search import invalidate_index
 
     # Флаг --whole: сохранить без разбивки
     if mode.get("whole"):
-        await message.answer("💾 Сохраняю и вычисляю embedding...")
-        # Для поиска используем тему + начало контента
-        emb_text = f"{mode['topic']}\n{mode['content'][:2000]}"
-        emb_vector = await get_embedding(emb_text)
-        emb_blob = embedding_to_blob(emb_vector) if emb_vector else None
         record_id = save_knowledge(
             mode["topic"], mode["content"], "",
             message.from_user.username or str(uid),
-            embedding=emb_blob,
         )
+        invalidate_index()
         size = len(mode["content"])
-        emb_status = "✅ embedding" if emb_blob else "⚠️ без embedding"
         await message.answer(
-            f"✅ «{mode['topic']}» сохранено целиком ({size} символов). {emb_status}\n"
+            f"✅ «{mode['topic']}» сохранено целиком ({size} символов).\n"
             f"ID записи: {record_id}"
         )
         return
@@ -168,35 +166,20 @@ async def cmd_done(message: Message):
     sections = split_document_to_sections(mode["content"], default_topic=mode["topic"])
 
     if len(sections) > 1:
-        await message.answer(f"💾 Сохраняю {len(sections)} секций, вычисляю embeddings...")
-        # Вычисляем embedding для каждой секции
-        embeddings = []
-        for topic, content in sections:
-            emb_text = f"{topic}\n{content[:2000]}"
-            vec = await get_embedding(emb_text)
-            embeddings.append(embedding_to_blob(vec) if vec else None)
-        emb_count = sum(1 for e in embeddings if e)
-        count = save_knowledge_sections(
-            sections, message.from_user.username or str(uid), embeddings=embeddings
-        )
+        count = save_knowledge_sections(sections, message.from_user.username or str(uid))
+        invalidate_index()
         topics_preview = "\n".join(f"  • {t[:60]}" for t, c in sections[:10])
         await message.answer(
-            f"✅ Документ «{mode['topic']}» разбит на {count} секций "
-            f"({emb_count} с embedding):\n{topics_preview}"
+            f"✅ Документ «{mode['topic']}» разбит на {count} секций:\n{topics_preview}"
         )
     else:
-        await message.answer("💾 Сохраняю, вычисляю embedding...")
         topic, content = sections[0]
-        emb_text = f"{topic}\n{content[:2000]}"
-        vec = await get_embedding(emb_text)
-        emb_blob = embedding_to_blob(vec) if vec else None
         record_id = save_knowledge(
             topic, content, "",
             message.from_user.username or str(uid),
-            embedding=emb_blob,
         )
-        emb_status = "✅ embedding" if emb_blob else "⚠️ без embedding"
-        await message.answer(f"✅ «{topic}» сохранено. {emb_status} ID: {record_id}")
+        invalidate_index()
+        await message.answer(f"✅ «{topic}» сохранено. ID: {record_id}")
 
 
 # ------------------------------------------------------------------
@@ -239,35 +222,15 @@ async def cmd_unblock(message: Message):
 
 @router.message(Command("reindex"))
 async def cmd_reindex(message: Message):
-    """Вычисляет embeddings для записей БЗ у которых их нет."""
+    """Сбрасывает TF-IDF индекс — он пересчитается при следующем запросе."""
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Нет доступа.")
         return
-
-    from services.embeddings import get_embedding, embedding_to_blob
-
-    pending = get_knowledge_without_embeddings()
-    if not pending:
-        await message.answer("✅ Все записи уже имеют embeddings.")
-        return
-
-    await message.answer(f"🔄 Начинаю индексацию {len(pending)} записей...")
-    done = 0
-    failed = 0
-    for rec in pending:
-        emb_text = f"{rec['topic']}\n{rec['content'][:2000]}"
-        vec = await get_embedding(emb_text)
-        if vec:
-            blob = embedding_to_blob(vec)
-            update_knowledge_embedding(rec["id"], blob)
-            done += 1
-        else:
-            failed += 1
-
-    result = f"✅ Проиндексировано: {done}"
-    if failed:
-        result += f"\n⚠️ Не удалось: {failed} (нет ответа от API)"
-    await message.answer(result)
+    from services.search import invalidate_index
+    from database import get_all_knowledge_with_ids
+    invalidate_index()
+    count = len(get_all_knowledge_with_ids())
+    await message.answer(f"✅ Индекс сброшен. При следующем запросе пересчитается по {count} записям.")
 
 
 # ------------------------------------------------------------------
