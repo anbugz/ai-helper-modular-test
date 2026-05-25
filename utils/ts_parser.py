@@ -119,7 +119,7 @@ def extract_ts_components_with_currency(text: str) -> Dict[str, Dict]:
     text_lower = text.lower()
     # Конвертируем числительные в цифры (голосовые: "пять тысяч" → 5000)
     text_lower = words_to_number(text_lower)
-    text_clean = re.sub(r"\d{8,10}", "", text_lower)
+    text_clean = text_lower
 
     # Инвойс — по ключевым словам
     inv = _extract_component(text_clean, ("инвойс", "сумма", "стоимость", "цена"))
