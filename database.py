@@ -49,6 +49,15 @@ def init_db() -> None:
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        CREATE TABLE IF NOT EXISTS user_blocks (
+            user_id     INTEGER PRIMARY KEY,
+            blocked_at  REAL NOT NULL,
+            reason      TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS suspicious_counts (
+            user_id  INTEGER PRIMARY KEY,
+            count    INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS knowledge_base (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             topic TEXT,
@@ -555,3 +564,72 @@ def create_logs_xlsx(rows: List[Tuple], sheet_name: str = "logs") -> bytes:
         zf.writestr("xl/sharedStrings.xml", ss_xml)
 
     return xlsx_buffer.getvalue()
+
+
+# ------------------------------------------------------------------
+# Блокировки пользователей
+# ------------------------------------------------------------------
+
+def db_is_blocked(user_id: int, duration: float = 3600.0) -> bool:
+    """Проверяет, заблокирован ли пользователь (с авторазблокировкой)."""
+    import time
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT blocked_at FROM user_blocks WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return False
+    if time.time() - row[0] >= duration:
+        c.execute("DELETE FROM user_blocks WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        return False
+    conn.close()
+    return True
+
+
+def db_block_user(user_id: int, reason: str = "") -> None:
+    """Блокирует пользователя (сохраняет timestamp в БД)."""
+    import time
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT OR REPLACE INTO user_blocks (user_id, blocked_at, reason) VALUES (?, ?, ?)",
+        (user_id, time.time(), reason),
+    )
+    conn.commit()
+    conn.close()
+    logger.warning(f"[DB] User {user_id} blocked, reason={reason}")
+
+
+def db_unblock_user(user_id: int) -> bool:
+    """Разблокирует пользователя. Возвращает True если был заблокирован."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM user_blocks WHERE user_id = ?", (user_id,))
+    deleted = c.rowcount > 0
+    c.execute("DELETE FROM suspicious_counts WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    if deleted:
+        logger.info(f"[DB] User {user_id} unblocked")
+    return deleted
+
+
+def db_increment_suspicious(user_id: int) -> int:
+    """Увеличивает счётчик подозрительных запросов. Возвращает новое значение."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO suspicious_counts (user_id, count) VALUES (?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET count = count + 1
+        """,
+        (user_id,),
+    )
+    conn.commit()
+    c.execute("SELECT count FROM suspicious_counts WHERE user_id = ?", (user_id,))
+    new_count = c.fetchone()[0]
+    conn.close()
+    return new_count
