@@ -185,8 +185,8 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
     pct_match = re.search(r'(\d+(?:[.,]\d+)?)\s*%', t)
     pct_val = float(pct_match.group(1).replace(',', '.')) if pct_match else 0
 
-    # Извлекаем евро/кг (если есть)
-    eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+    # Извлекаем евро/кг (если есть) — поддерживаем "евро", "EUR", "€"
+    eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:евро|eur|€)', t)
     eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
 
     # Комбинированный: "15%, но не менее 0,2 евро/кг"
