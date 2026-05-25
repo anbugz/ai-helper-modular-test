@@ -559,11 +559,34 @@ async def handle_text(message: Message):
             )
         
             extra = "\n".join(context_parts)
+
+            # Подмешиваем последний обмен (предыдущий вопрос бота + ответ пользователя),
+            # чтобы при уточнении бот помнил о ЧЁМ шла речь (футболки, а не ткань).
+            try:
+                from database import get_dialog_history
+                prev = get_dialog_history(user_id, limit=4)
+                # Последнее сообщение в prev — текущий запрос пользователя (сохранён выше).
+                # Ищем предыдущую пару (вопрос бота + более ранний запрос) среди остальных.
+                earlier = prev[:-1] if prev else []
+                if earlier:
+                    prev_user = next((m["content"] for m in reversed(earlier) if m["role"] == "user"), "")
+                    prev_bot = next((m["content"] for m in reversed(earlier) if m["role"] == "assistant"), "")
+                    if prev_user or prev_bot:
+                        hist_ctx = "\n\n[ПРЕДЫДУЩИЙ КОНТЕКСТ ДИАЛОГА — учитывай его, это уточнение того же товара]:\n"
+                        if prev_user:
+                            hist_ctx += f"Ранее пользователь спросил: {prev_user[:300]}\n"
+                        if prev_bot:
+                            hist_ctx += f"Ты ответил (кратко): {prev_bot[:500]}\n"
+                        hist_ctx += "ВАЖНО: текущее сообщение — это ОТВЕТ на твои уточняющие вопросы, а не новый товар. Продолжай подбор того же изделия."
+                        extra = hist_ctx + "\n\n" + extra
+            except Exception as e:
+                logger.warning(f"Не удалось добавить контекст диалога: {e}")
+
             # Ограничиваем общий размер промпта
             if len(extra) > 12000:
                 extra = extra[:12000] + "\n...[контекст обрезан]"
             logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
-            # Подбор кода — без истории (чтобы не склеивались запросы)
+            # Подбор кода — без полной истории, но с последним обменом (см. выше)
             msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
             answer = await ask_deepseek(msgs)
             answer = strip_ai_assistant_junk(answer)
