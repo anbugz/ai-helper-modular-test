@@ -203,3 +203,62 @@ def split_document_to_sections(text: str, default_topic: str = "Документ
         sections.append((default_topic, text.strip()))
     
     return sections
+
+
+# ------------------------------------------------------------------
+# MARKDOWN → HTML (DeepSeek отдаёт Markdown, Telegram у нас в HTML)
+# ------------------------------------------------------------------
+
+def markdown_to_html(text: str) -> str:
+    """Конвертирует базовый Markdown в Telegram-HTML.
+
+    Поддерживает:
+      **жирный** / __жирный__   → <b>…</b>
+      *курсив* / _курсив_       → <i>…</i>
+      `код`                     → <code>…</code>
+      ```блок```                → <pre>…</pre>
+      * пункт / - пункт         → • пункт
+      ### Заголовок             → <b>Заголовок</b>
+
+    HTML-спецсимволы экранируются ДО вставки тегов, чтобы не сломать разметку.
+    """
+    if not text:
+        return text
+
+    # 1. Защищаем уже существующие HTML-теги бота (<b>, <i>, <code>, <pre>, <a>)
+    #    — чтобы не экранировать их. Временно заменяем на плейсхолдеры.
+    placeholders = []
+    def _stash(m):
+        placeholders.append(m.group(0))
+        return f"\x00{len(placeholders) - 1}\x00"
+    text = re.sub(r"</?(?:b|i|code|pre|a)(?:\s[^>]*)?>", _stash, text)
+
+    # 2. Экранируем HTML-спецсимволы
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # 3. Блоки кода ```...``` → <pre>
+    text = re.sub(r"```[a-zA-Z]*\n?(.*?)```", r"<pre>\1</pre>", text, flags=re.DOTALL)
+
+    # 4. Инлайн-код `...` → <code>
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+
+    # 5. Заголовки ### / ## / # → жирный
+    text = re.sub(r"^#{1,6}\s*(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+
+    # 6. Жирный **...** и __...__
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"__([^_]+)__", r"<b>\1</b>", text)
+
+    # 7. Курсив *...* и _..._ (одиночные, не задевая уже обработанные)
+    text = re.sub(r"(?<!\*)\*(?!\*)([^*\n]+?)\*(?!\*)", r"<i>\1</i>", text)
+    text = re.sub(r"(?<!_)_(?!_)([^_\n]+?)_(?!_)", r"<i>\1</i>", text)
+
+    # 8. Маркеры списка в начале строки: "* " / "- " / "+ " → "• "
+    text = re.sub(r"^[ \t]*[\*\-\+]\s+", "• ", text, flags=re.MULTILINE)
+
+    # 9. Возвращаем сохранённые HTML-теги
+    def _unstash(m):
+        return placeholders[int(m.group(1))]
+    text = re.sub(r"\x00(\d+)\x00", _unstash, text)
+
+    return text
