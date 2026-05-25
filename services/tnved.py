@@ -1,11 +1,13 @@
 """
 services/tnved.py — кэш данных ТН ВЭД, поиск, проверка радиоэлектроники.
-Полный перенос из tnved_engine.py.
 """
 import re
 from typing import List, Dict, Optional
-from config import RADIO_ELECTRONICS_CODES_SET, _RADIO_GROUPS, TNVED_FULL_NAMES, logger
+from config import RADIO_ELECTRONICS_CODES_SET, TNVED_FULL_NAMES, logger
 from database import save_tnved_batch, get_tnved_from_db, get_all_tnved_from_db
+
+# Группы, для которых ВСЕ коды считаются радиоэлектроникой (жёстко)
+RADIO_GROUPS_ALWAYS = {"85"}  # 85 = телефоны, ноутбуки, мониторы — однозначно радио
 
 # ------------------------------------------------------------------
 # Кэш (в памяти, не в SQLite)
@@ -115,28 +117,26 @@ def _row_to_tnved_dict(row: List[str]) -> dict:
 # Радиоэлектроника
 # ------------------------------------------------------------------
 
-RADIO_GROUPS_ALWAYS = {"84", "85", "90", "91", "95"}
-
 def is_radio_electronics(code: str) -> bool:
     """Проверяет по списку + по первым 2 цифрам группы.
-    Для коротких шаблонов (≤9 цифр) — startswith (группы/подгруппы).
-    Для длинных шаблонов (≥10 цифр) — точное совпадение (полные коды).
+    Группа 85 — всегда радио (телефоны, ноутбуки, мониторы).
+    Группы 84, 90, 91, 95 — только если код есть в RADIO_ELECTRONICS_CODES_SET
+    (загружен через /updatecodes).
     """
     if not code:
         return False
     c = code.replace(" ", "").replace(".", "").strip()
 
-    # Группы 84, 85, 90, 91, 95 — всегда радиоэлектроника
-    if len(c) >= 2 and c[:2] in RADIO_GROUPS_ALWAYS:
+    # Группа 85 — всегда радиоэлектроника
+    if len(c) >= 2 and c[:2] == "85":
         return True
 
+    # Остальные группы — только по кастомному списку
     for pattern in RADIO_ELECTRONICS_CODES_SET:
         if len(pattern) <= 9:
-            # Короткие паттерны (4-9 знаков) = группа/подгруппа/позиция → startswith
             if c.startswith(pattern):
                 return True
         else:
-            # 10-значные паттерны = конкретный товар → точное совпадение
             if c == pattern:
                 return True
     return False
@@ -225,21 +225,21 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
         except ValueError:
             pass
 
-    # Комбинированный: "15%, но не менее 0,2 евро/кг"
+    # Комбинированный: "15%, но не менее 0,2 евро/кг" или "0,2 EUR/кг"
     if "не менее" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:евро|eur)', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "min", "formula": tariff_str, "value": eur_val}
 
-    # Комбинированный с плюсом: "10% + 0,5 евро/кг"
-    if "+" in t and "евро" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+    # Комбинированный с плюсом: "10% + 0,5 евро/кг" или "10% + 0,5 EUR/кг"
+    if "+" in t and ("евро" in t or "eur" in t):
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:евро|eur)', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "plus", "formula": tariff_str, "value": eur_val}
 
-    # Фиксированный евро: "0,3 евро/кг"
-    if "евро" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+    # Фиксированный евро: "0,3 евро/кг" или "0,3 EUR/кг"
+    if "евро" in t or "eur" in t:
+        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:евро|eur)', t)
         eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
         return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
 
