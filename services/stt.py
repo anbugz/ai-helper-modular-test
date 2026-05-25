@@ -1,14 +1,15 @@
 """
 services/stt.py — Deepgram API (speech-to-text).
+Использует httpx.AsyncClient для неблокирующего I/O.
 """
 import httpx
 from typing import Optional
 from config import DEEPGRAM_API_KEY, logger
 
 
-def speech_to_text(audio_path: str) -> Optional[str]:
+async def speech_to_text(audio_path: str) -> Optional[str]:
     """
-    Распознавание речи через Deepgram API.
+    Распознавание речи через Deepgram API (async).
 
     Args:
         audio_path: путь к аудио-файлу (.ogg, .mp3, .wav)
@@ -21,7 +22,10 @@ def speech_to_text(audio_path: str) -> Optional[str]:
         return None
     try:
         with open(audio_path, "rb") as f:
-            response = httpx.post(
+            audio_data = f.read()
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
                 "https://api.deepgram.com/v1/listen",
                 headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"},
                 params={
@@ -29,17 +33,20 @@ def speech_to_text(audio_path: str) -> Optional[str]:
                     "punctuate": "true",
                     "model": "nova-2",
                 },
-                content=f.read(),
-                timeout=15.0,
+                content=audio_data,
             )
+
         if response.status_code == 200:
             result = response.json()
-            transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
+            transcript = (
+                result["results"]["channels"][0]["alternatives"][0]["transcript"]
+            )
             text = transcript.strip()
             return text if text else None
         else:
             logger.error(f"Deepgram HTTP {response.status_code}: {response.text[:200]}")
             return None
+
     except Exception as e:
         logger.error(f"Deepgram ошибка: {e}")
         return None
