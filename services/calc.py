@@ -139,8 +139,50 @@ def format_calculation_fallback(
     # === 3. ИТОГОВЫЙ РАСЧЁТ (таблица) ===
     if ts_fallback and tariff_info:
         pt = tariff_info.get("parsed_tariff", {})
-        duty_pct = pt.get("value", 0) / 100 if pt.get("type") == "percent" else 0
-        duty_val = ts_fallback * duty_pct
+        tariff_type = pt.get("type", "")
+        ad_val_pct = pt.get("value", 0) / 100   # адвалорный % (всегда проценты)
+        eur_per_kg = pt.get("eur_per_kg", 0)     # евро/кг (для min/plus/fixed_eur)
+
+        # Адвалорная часть (% от ТС)
+        duty_adval = ts_fallback * ad_val_pct
+
+        # Евро-составляющая: переводим EUR → валюта инвойса
+        duty_eur_component = 0.0
+        eur_in_cur_str = ""
+        if eur_per_kg and weight_kg:
+            eur_amount = eur_per_kg * weight_kg  # итого EUR
+            if currency == "EUR":
+                duty_eur_component = eur_amount
+            elif "EUR" in rates and currency in rates:
+                try:
+                    eur_rub = eur_amount * float(rates["EUR"])
+                    duty_eur_component = round(eur_rub / float(rates[currency]), 2)
+                except (ValueError, TypeError, ZeroDivisionError):
+                    duty_eur_component = eur_amount
+            elif "EUR" in rates:
+                try:
+                    duty_eur_component = eur_amount * float(rates["EUR"])
+                except (ValueError, TypeError):
+                    duty_eur_component = eur_amount
+            eur_in_cur_str = f"{eur_per_kg} €/кг × {weight_kg:.0f} кг = {eur_amount:.2f} EUR → {duty_eur_component:,.2f} {currency}"
+
+        # Итоговая пошлина зависит от типа ставки
+        if tariff_type == "min":
+            # MAX(адвалорная, евро/кг × вес)
+            duty_val = max(duty_adval, duty_eur_component)
+            duty_method = "адвалорная" if duty_adval >= duty_eur_component else "минимальная (евро/кг)"
+        elif tariff_type == "plus":
+            # адвалорная + евро/кг × вес
+            duty_val = duty_adval + duty_eur_component
+            duty_method = "адвалорная + евро/кг"
+        elif tariff_type == "fixed_eur":
+            # только евро/кг × вес
+            duty_val = duty_eur_component
+            duty_method = "фиксированная (евро/кг)"
+        else:
+            # простой процент
+            duty_val = duty_adval
+            duty_method = "адвалорная"
         vat_val = (ts_fallback + duty_val) * vat_rate
         
         # Сбор сконвертированный в валюту инвойса
@@ -164,7 +206,20 @@ def format_calculation_fallback(
         
         lines.append("📊 <b>Итоговый расчёт</b>")
         lines.append(f"💰 Таможенная стоимость:  {ts_fallback:>12,.2f} {currency}")
-        lines.append(f"💰 Пошлина {int(duty_pct * 100)}%:{'':>14} {duty_val:>12,.2f} {currency}")
+        duty_pct_display = int(ad_val_pct * 100) if ad_val_pct else 0
+        lines.append(f"💰 Пошлина ({duty_method}):")
+        if tariff_type in ("min", "plus") and eur_per_kg and weight_kg:
+            lines.append(f"   • адвалорная {duty_pct_display}%: {duty_adval:>10,.2f} {currency}")
+            lines.append(f"   • евро/кг:  {eur_in_cur_str}")
+            if tariff_type == "min":
+                lines.append(f"   • итого (MAX): {duty_val:>10,.2f} {currency}")
+            else:
+                lines.append(f"   • итого (+): {duty_val:>12,.2f} {currency}")
+        elif tariff_type == "fixed_eur" and eur_per_kg and weight_kg:
+            lines.append(f"   • {eur_in_cur_str}")
+            lines.append(f"   • итого: {duty_val:>16,.2f} {currency}")
+        else:
+            lines.append(f"{'':>26} {duty_val:>12,.2f} {currency}")
         lines.append(f"🧾 НДС {vat_pct}%:{'':>17} {vat_val:>12,.2f} {currency}")
         
         if fee_in_cur > 0:
