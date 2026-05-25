@@ -730,7 +730,10 @@ async def handle_text(message: Message):
 
     else:
         # === СЦЕНАРИЙ 3: AI-АССИСТЕНТ (общий вопрос) ===
-        extra = "Отвечай как эксперт West Asia по ВЭД и логистике. "
+        extra = "Ты AI-помощник West Asia для менеджеров по ВЭД. "
+        extra += "ДУМАЙ перед ответом: проанализируй что именно спрашивает менеджер, найди в контексте самое релевантное, не смешивай разные понятия. "
+        extra += "Например: 'декларант' — это сотрудник West Asia (Анна, Михаил, Александра), а не экспедитор/агент. 'Агент авиа' — это внешний партнёр по авиадоставке, а не декларант. "
+        extra += "Если в вопросе несколько смыслов — выбери наиболее очевидный для менеджера ВЭД в контексте West Asia. "
         extra += "НЕ пиши курс ЦБ РФ в ответе — он будет добавлен автоматически. "
         extra += (
             "НЕ выдумывай числовые ставки пошлины и НДС: если точных данных по коду ТН ВЭД нет, "
@@ -749,6 +752,21 @@ async def handle_text(message: Message):
         try:
             from services.search import tfidf_search
             kb_results = tfidf_search(user_text, top_n=4, min_score=0.05)
+
+            # Умная фильтрация: если спрашивают про декларанта — убираем записи про агентов/экспедиторов
+            _q = text_lower
+            if any(w in _q for w in ("декларант", "декларанта", "декларанты")):
+                kb_results = [
+                    k for k in kb_results
+                    if not any(w in k.get("topic", "").lower() for w in ("агент", "экспедитор", "авиа", "авто", "море", "жд"))
+                ]
+            # И наоборот: если спрашивают про агентов/экспедиторов — убираем записи про декларантов
+            elif any(w in _q for w in ("агент", "экспедитор", "перевозчик")):
+                kb_results = [
+                    k for k in kb_results
+                    if "декларант" not in k.get("topic", "").lower()
+                ]
+
             # Если найденные секции из одного документа — добираем ещё секции из него же
             if kb_results:
                 from database import get_all_knowledge_with_ids
@@ -761,8 +779,8 @@ async def handle_text(message: Message):
                     same_doc = [k for k in all_kb if k.get("source_doc") == src]
                     if len(same_doc) > len(kb_results):
                         found_ids = {k["id"] for k in kb_results}
-                        extra = [k for k in same_doc if k["id"] not in found_ids]
-                        kb_results = kb_results + extra[:max(0, 8 - len(kb_results))]
+                        extra_docs = [k for k in same_doc if k["id"] not in found_ids]
+                        kb_results = kb_results + extra_docs[:max(0, 8 - len(kb_results))]
             if kb_results:
                 extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                 for k in kb_results:
