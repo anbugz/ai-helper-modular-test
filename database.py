@@ -633,3 +633,51 @@ def db_increment_suspicious(user_id: int) -> int:
     new_count = c.fetchone()[0]
     conn.close()
     return new_count
+
+
+# ------------------------------------------------------------------
+# ТН ВЭД — поиск по разделам (для хендлера подбора кода)
+# ------------------------------------------------------------------
+
+def search_tnved_by_sections(sections: List[str]) -> List[Dict]:
+    """Ищет коды ТН ВЭД по списку разделов (префиксов).
+
+    Фильтрует записи с пустым наименованием и проверяет совпадение
+    первых 4 цифр кода с префиксом раздела.
+
+    Args:
+        sections: список префиксов, например ["5208", "6004"]
+
+    Returns:
+        Список dict с ключами: code, name, tariff, section
+    """
+    if not sections:
+        return []
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    results: List[Dict] = []
+
+    for section in sections:
+        c.execute(
+            """
+            SELECT code, name, tariff
+            FROM tnved_cache
+            WHERE code LIKE ? AND name IS NOT NULL AND name != ''
+            LIMIT 20
+            """,
+            (f"{section}%",),
+        )
+        section_prefix = section[:4]
+        for row in c.fetchall():
+            code_prefix = row[0][:4] if len(row[0]) >= 4 else row[0]
+            if code_prefix == section_prefix:
+                results.append({
+                    "code": row[0],
+                    "name": row[1],
+                    "tariff": row[2],
+                    "section": section,
+                })
+
+    conn.close()
+    return results
