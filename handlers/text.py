@@ -32,6 +32,7 @@ from config import (
 from database import (
     save_message, save_correction, get_knowledge,
     get_dialogs_for_export, create_logs_xlsx,
+    search_tnved_by_sections,
 )
 from services.security import full_security_scan, is_blocked, contains_pii, redact_pii
 from services.tnved import (
@@ -461,27 +462,7 @@ async def handle_text(message: Message):
         
             all_results = []
             if matched_sections:
-                # Ищем коды в matched разделах
-                import sqlite3
-                from config import DB_PATH
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-            
-                for section in matched_sections:
-                    c.execute(
-                        "SELECT code, name, tariff FROM tnved_cache WHERE code LIKE ? AND name IS NOT NULL AND name != '' LIMIT 20",
-                        (f"{section}%",)
-                    )
-                    for row in c.fetchall():
-                        # Фильтруем мусор: код должен соответствовать разделу
-                        code_prefix = row[0][:4] if len(row[0]) >= 4 else row[0]
-                        section_prefix = section[:4]
-                        if code_prefix == section_prefix:
-                            all_results.append({
-                                "code": row[0], "name": row[1], "tariff": row[2],
-                                "section": section,
-                            })
-                conn.close()
+                all_results = search_tnved_by_sections(list(matched_sections))
         
             # --- ВСЕГДА Используем DeepSeek с уточняющими вопросами ---
             context_parts = [
