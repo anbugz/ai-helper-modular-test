@@ -535,20 +535,10 @@ async def handle_text(message: Message):
             else:
                 context_parts.append("\nВ БД нет точных совпадений по материалу.")
             
-            # === ПОИСК ПО БАЗЕ ЗНАНИЙ — векторный ===
+            # === ПОИСК ПО БАЗЕ ЗНАНИЙ — TF-IDF ===
             try:
-                from services.embeddings import get_embedding
-                from database import vector_search, search_knowledge
-                query_vec = await get_embedding(user_text)
-                if query_vec:
-                    kb_results = vector_search(query_vec, top_n=2, min_score=0.3)
-                else:
-                    # Fallback на keyword если embeddings недоступны
-                    kb_words = {w for w in re.findall(r'[а-яёa-z]{3,}', text_lower) if w not in STOP_WORDS}
-                    for w in list(kb_words):
-                        lemma = lemmatize_russian(w)
-                        if lemma != w: kb_words.add(lemma)
-                    kb_results = search_knowledge(kb_words, top_n=2)
+                from services.search import tfidf_search
+                kb_results = tfidf_search(user_text, top_n=2, min_score=0.05)
                 if kb_results:
                     context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
                     for k in kb_results:
@@ -739,21 +729,10 @@ async def handle_text(message: Message):
             "Правило: если контакт не пришёл в контексте — его не существует для тебя."
         )
         
-        # === ПОИСК ПО БАЗЕ ЗНАНИЙ — векторный ===
+        # === ПОИСК ПО БАЗЕ ЗНАНИЙ — TF-IDF ===
         try:
-            from services.embeddings import get_embedding
-            from database import vector_search, search_knowledge
-            query_vec = await get_embedding(user_text)
-            if query_vec:
-                kb_results = vector_search(query_vec, top_n=2, min_score=0.3)
-            else:
-                # Fallback на keyword если embeddings недоступны
-                raw_words = set(re.findall(r'[а-яёa-z]{3,}', text_lower))
-                query_words = {w for w in raw_words if w not in STOP_WORDS}
-                for w in list(query_words):
-                    lemma = lemmatize_russian(w)
-                    if lemma != w: query_words.add(lemma)
-                kb_results = search_knowledge(query_words, top_n=2)
+            from services.search import tfidf_search
+            kb_results = tfidf_search(user_text, top_n=2, min_score=0.05)
             if kb_results:
                 extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                 for k in kb_results:
