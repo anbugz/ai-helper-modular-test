@@ -14,6 +14,7 @@ from database import (
     get_dialogs_for_export, create_logs_xlsx,
     get_all_knowledge_with_ids, delete_knowledge_by_id, delete_knowledge_by_topic,
     update_knowledge_embedding, get_knowledge_without_embeddings,
+    get_knowledge_grouped, delete_knowledge_by_source, clear_knowledge_base,
 )
 from services.security import unblock_user
 from services.currency import get_cbr_rates
@@ -48,18 +49,21 @@ async def cmd_topics(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Нет доступа.")
         return
-    topics = get_all_knowledge_with_ids()
-    if not topics:
-        await message.answer("📭 Пусто.")
+    groups = get_knowledge_grouped()
+    if not groups:
+        await message.answer("📭 База знаний пуста.")
         return
-    lines = [f"[{t['id']}] {t['topic'][:80]}" for t in topics]
-    text = "<b>База знаний (ID — тема):</b>\n" + "\n".join(lines)
-    text += "\n\n<i>Для удаления: /forget ID или /forget часть_темы</i>"
-    # Разбиваем на части если длинный
+    lines = [g["display"] for g in groups]
+    total_sections = sum(len(g["ids"]) for g in groups)
+    text = (
+        f"<b>База знаний</b> ({len(groups)} документов, {total_sections} секций):\n\n"
+        + "\n".join(lines)
+        + "\n\n<i>Удалить: /forget название_документа или /forget ID\n"
+        + "Очистить всё: /cleardb</i>"
+    )
     if len(text) > 3800:
-        for i in range(0, len(lines), 50):
-            chunk = "<b>Темы:</b>\n" + "\n".join(lines[i:i+50])
-            await message.answer(chunk)
+        for i in range(0, len(lines), 40):
+            await message.answer("\n".join(lines[i:i+40]))
     else:
         await message.answer(text)
 
@@ -164,19 +168,23 @@ async def cmd_done(message: Message):
     # Разбиваем документ на секции по заголовкам
     from utils.text import split_document_to_sections
     sections = split_document_to_sections(mode["content"], default_topic=mode["topic"])
+    source_doc = mode["topic"]  # имя документа = тема из /learn
 
     if len(sections) > 1:
-        count = save_knowledge_sections(sections, message.from_user.username or str(uid))
+        count = save_knowledge_sections(
+            sections, message.from_user.username or str(uid),
+            source_doc=source_doc,
+        )
         invalidate_index()
-        topics_preview = "\n".join(f"  • {t[:60]}" for t, c in sections[:10])
         await message.answer(
-            f"✅ Документ «{mode['topic']}» разбит на {count} секций:\n{topics_preview}"
+            f"✅ Документ «{source_doc}» сохранён ({count} секций)."
         )
     else:
         topic, content = sections[0]
         record_id = save_knowledge(
             topic, content, "",
             message.from_user.username or str(uid),
+            source_doc=source_doc,
         )
         invalidate_index()
         await message.answer(f"✅ «{topic}» сохранено. ID: {record_id}")
@@ -219,6 +227,26 @@ async def cmd_unblock(message: Message):
 # ------------------------------------------------------------------
 # /log — экспорт логов (админ)
 # ------------------------------------------------------------------
+
+@router.message(Command("cleardb"))
+async def cmd_cleardb(message: Message):
+    """Полная очистка базы знаний."""
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа.")
+        return
+    arg = message.text.replace("/cleardb", "").strip()
+    if arg != "confirm":
+        await message.answer(
+            "⚠️ Это удалит ВСЕ записи из базы знаний.\n"
+            "Для подтверждения отправь: /cleardb confirm"
+        )
+        return
+    from database import clear_knowledge_base
+    from services.search import invalidate_index
+    count = clear_knowledge_base()
+    invalidate_index()
+    await message.answer(f"✅ База знаний очищена. Удалено записей: {count}")
+
 
 @router.message(Command("reindex"))
 async def cmd_reindex(message: Message):
