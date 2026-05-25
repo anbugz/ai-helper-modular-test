@@ -166,9 +166,11 @@ def format_calculation_fallback(
         rate_info = fr.get("rate", "")
         if cur == currency:
             lines.append(f"• Фрахт: {val:,.2f} {currency}")
+        elif rate_info:
+            lines.append(f"• Фрахт: {rate_info}")
         else:
-            lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
-    
+            lines.append(f"• Фрахт: {val:,.2f} {cur} → {conv:,.2f} {currency}")
+
     # Страховка
     if "insurance" in ts_components:
         ins = ts_components["insurance"]
@@ -178,8 +180,10 @@ def format_calculation_fallback(
         rate_info = ins.get("rate", "")
         if cur == currency:
             lines.append(f"• Страховка: {val:,.2f} {currency}")
+        elif rate_info:
+            lines.append(f"• Страховка: {rate_info}")
         else:
-            lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency} {rate_info}")
+            lines.append(f"• Страховка: {val:,.2f} {cur} → {conv:,.2f} {currency}")
     
     lines.append("")
     
