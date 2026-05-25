@@ -1,14 +1,10 @@
 """
 services/security.py — защита: jailbreak, PII, блокировки.
+Блокировки хранятся в SQLite через database.py (переживают рестарт).
 """
 import re
-import time
-from typing import Tuple, List, Dict, Optional, Set
+from typing import Tuple, List
 from config import ADMIN_ID, logger
-
-# --- Blocked users cache ---
-_blocked_users: Dict[int, float] = {}
-_block_duration = 3600  # 1 hour
 
 # --- Suspicious patterns ---
 _JAILBREAK_PATTERNS = [
@@ -27,66 +23,58 @@ _JAILBREAK_PATTERNS = [
 ]
 
 _PII_PATTERNS = {
-    "phone": r"\+?7[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}",
-    "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+    "phone":    r"\+?7[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}",
+    "email":    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
     "passport": r"\d{4}\s?\d{6}",
-    "inn": r"\d{12}",
-    "snils": r"\d{3}\s?\d{3}\s?\d{3}\s?\d{2}",
+    "inn":      r"\d{12}",
+    "snils":    r"\d{3}\s?\d{3}\s?\d{3}\s?\d{2}",
 }
 
-_SUSPICIOUS_THRESHOLD = 3  # количество подозрительных запросов для бана
-_suspicious_counts: Dict[int, int] = {}
+_SUSPICIOUS_THRESHOLD = 3
+_BLOCK_DURATION = 3600.0  # секунды
 
 
 def full_security_scan(text: str, user_id: int) -> Tuple[bool, str]:
     """
     Полное сканирование сообщения.
-    
+
     Returns:
-        (is_attack, reason): is_attack=True если сообщение отклонено
-        reason: строка с причиной ("JAILBREAK", "SUSPICIOUS", "USER_BLOCKED", "")
+        (is_attack, reason): is_attack=True если сообщение отклонено.
+        reason: "JAILBREAK", "JAILBREAK_BLOCKED", "USER_BLOCKED" или "".
     """
-    # Проверяем, не заблокирован ли пользователь
-    if is_blocked(user_id):
+    from database import db_is_blocked, db_block_user, db_increment_suspicious
+
+    # Администратор никогда не блокируется
+    if user_id == ADMIN_ID:
+        return False, ""
+
+    if db_is_blocked(user_id, _BLOCK_DURATION):
         return True, "USER_BLOCKED"
-    
+
     text_lower = text.lower()
-    
-    # Проверка jailbreak
     for pattern in _JAILBREAK_PATTERNS:
         if re.search(pattern, text_lower):
-            _suspicious_counts[user_id] = _suspicious_counts.get(user_id, 0) + 1
-            if _suspicious_counts[user_id] >= _SUSPICIOUS_THRESHOLD:
-                _blocked_users[user_id] = time.time()
-                logger.warning(f"User {user_id} blocked for jailbreak attempts")
+            new_count = db_increment_suspicious(user_id)
+            if new_count >= _SUSPICIOUS_THRESHOLD:
+                db_block_user(user_id, reason="jailbreak")
                 return True, "JAILBREAK_BLOCKED"
             return True, "JAILBREAK"
-    
+
     return False, ""
 
 
 def is_blocked(user_id: int) -> bool:
-    """Проверяет, заблокирован ли пользователь."""
+    """Публичная проверка блокировки (используется в хендлерах)."""
     if user_id == ADMIN_ID:
         return False
-    blocked_at = _blocked_users.get(user_id)
-    if blocked_at:
-        if time.time() - blocked_at < _block_duration:
-            return True
-        # Разблокируем автоматически
-        del _blocked_users[user_id]
-    return False
+    from database import db_is_blocked
+    return db_is_blocked(user_id, _BLOCK_DURATION)
 
 
 def unblock_user(user_id: int) -> bool:
     """Разблокирует пользователя. Возвращает True если был заблокирован."""
-    if user_id in _blocked_users:
-        del _blocked_users[user_id]
-        _suspicious_counts.pop(user_id, None)
-        logger.info(f"User {user_id} unblocked")
-        return True
-    _suspicious_counts.pop(user_id, None)
-    return False
+    from database import db_unblock_user
+    return db_unblock_user(user_id)
 
 
 def contains_pii(text: str) -> Tuple[bool, List[str]]:
