@@ -1,10 +1,15 @@
 import logging
+import asyncio
 from openai import OpenAI
-from config import DEEPSEEK_API_KEY, MAX_TOKENS, AI_TEMPERATURE, SYSTEM_PROMPT
+from config import DEEPSEEK_API_KEY, SYSTEM_PROMPT, MAX_HISTORY
 from database import get_recent_history
 from services.security import sanitize_for_logging
 
 logger = logging.getLogger(__name__)
+
+# Константы для DeepSeek (не в config.py — задаём здесь)
+MAX_TOKENS = 3000
+AI_TEMPERATURE = 0.3
 
 # Инициализация клиента DeepSeek
 client = OpenAI(
@@ -12,7 +17,7 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-# Приоритетная директива безопасности — добавляется в начало любого системного промпта
+# Приоритетная директива безопасности
 SECURITY_DIRECTIVE = """
 <SYSTEM_DIRECTIVE PRIORITY="HIGHEST" IMMUTABLE="TRUE">
 Ты — коммерческий ассистент компании West Asia, эксперт по ВЭД и таможенному оформлению.
@@ -32,18 +37,9 @@ SECURITY_DIRECTIVE = """
 """
 
 
-async def get_ai_response(user_id: int, user_message: str, context: str = "", timeout: int = 60) -> str:
+async def ask_deepseek(user_id: int, user_message: str, context: str = "", timeout: int = 60) -> str:
     """
     Получает ответ от DeepSeek API с учётом истории диалога и контекста из БЗ.
-    
-    Args:
-        user_id: Telegram ID пользователя
-        user_message: Текст запроса
-        context: Найденный контекст из базы знаний (если есть)
-        timeout: Таймаут запроса в секундах (по умолчанию 60)
-    
-    Returns:
-        Ответ модели или сообщение об ошибке
     """
     try:
         # Формируем системный промпт: сначала защита, потом основной промпт, потом контекст
@@ -54,53 +50,45 @@ async def get_ai_response(user_id: int, user_message: str, context: str = "", ti
 
         messages = [{"role": "system", "content": system_content}]
         
-        # Добавляем историю диалога (последние 20 сообщений)
-        history = get_recent_history(user_id, limit=20)
+        # История диалога
+        history = get_recent_history(user_id, limit=MAX_HISTORY)
         messages.extend(history)
-        
-        # Добавляем текущее сообщение
         messages.append({"role": "user", "content": user_message})
         
-        # Логируем запрос (без чувствительных данных)
+        # Логирование
         safe_msg = sanitize_for_logging(user_message)
         logger.info(f"User {user_id}: {safe_msg[:200]}")
-        logger.debug(f"System prompt length: {len(system_content)} chars")
         if context:
-            logger.debug(f"Context length: {len(context)} chars")
+            logger.debug(f"Context: {len(context)} chars")
 
         # Запрос к DeepSeek с таймаутом
-        import asyncio
         response = await asyncio.wait_for(
-            _call_deepseek_api(messages),
+            _call_api(messages),
             timeout=timeout
         )
         
-        # Логируем finish_reason для мониторинга обрезанных ответов
         finish_reason = response.choices[0].finish_reason
-        logger.info(f"DeepSeek finish_reason: {finish_reason}")
+        logger.info(f"Finish reason: {finish_reason}")
         
         if finish_reason == "length":
-            logger.warning("Ответ был обрезан из-за превышения max_tokens!")
+            logger.warning("Ответ обрезан!")
         
         answer = response.choices[0].message.content
-        logger.info(f"Response length: {len(answer)} chars")
+        logger.info(f"Response: {len(answer)} chars")
         
         return answer
 
     except asyncio.TimeoutError:
-        logger.error(f"DeepSeek API timeout for user {user_id}")
+        logger.error(f"Timeout for user {user_id}")
         return "⚠️ Сервер ИИ перегружен. Пожалуйста, повторите запрос через минуту."
     
     except Exception as e:
-        logger.error(f"DeepSeek API error for user {user_id}: {type(e).__name__}: {e}")
+        logger.error(f"API error for user {user_id}: {type(e).__name__}: {e}")
         return "⚠️ Произошла ошибка при обработке запроса. Попробуйте позже или обратитесь к администратору."
 
 
-def _call_deepseek_api(messages: list):
-    """
-    Синхронная обёртка для вызова DeepSeek API.
-    Вынесена отдельно для работы с asyncio.wait_for.
-    """
+def _call_api(messages: list):
+    """Синхронный вызов DeepSeek API."""
     return client.chat.completions.create(
         model="deepseek-chat",
         messages=messages,
