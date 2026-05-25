@@ -181,31 +181,39 @@ def parse_tnved_tariff(tariff_str: str) -> dict:
     if not t:
         return {"type": "", "formula": "", "value": 0}
     
-    # Процент: "15%", "5 %"
+    # Извлекаем процент (если есть)
     pct_match = re.search(r'(\d+(?:[.,]\d+)?)\s*%', t)
-    if pct_match:
-        try:
-            val = float(pct_match.group(1).replace(',', '.'))
-            return {"type": "percent", "formula": tariff_str, "value": val}
-        except ValueError:
-            pass
-    
+    pct_val = float(pct_match.group(1).replace(',', '.')) if pct_match else 0
+
+    # Извлекаем евро/кг (если есть)
+    eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
+    eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
+
     # Комбинированный: "15%, но не менее 0,2 евро/кг"
-    if "не менее" in t or "но менее" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
-        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
-        return {"type": "min", "formula": tariff_str, "value": eur_val}
-    
+    # ВАЖНО: проверяем ДО простого процента, иначе евро-компонент теряется
+    if ("не менее" in t or "но менее" in t) and pct_val and eur_val:
+        return {
+            "type": "min",
+            "formula": tariff_str,
+            "value": pct_val,       # адвалорный % (для расчёта адвалорной части)
+            "eur_per_kg": eur_val,  # минимальная ставка евро/кг
+        }
+
     # Комбинированный с плюсом: "10% + 0,5 евро/кг"
-    if "+" in t and "евро" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
-        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
-        return {"type": "plus", "formula": tariff_str, "value": eur_val}
-    
+    if "+" in t and pct_val and eur_val:
+        return {
+            "type": "plus",
+            "formula": tariff_str,
+            "value": pct_val,       # адвалорный %
+            "eur_per_kg": eur_val,  # фиксированная добавка евро/кг
+        }
+
+    # Простой процент: "15%"
+    if pct_val:
+        return {"type": "percent", "formula": tariff_str, "value": pct_val, "eur_per_kg": 0}
+
     # Фиксированный евро: "0,3 евро/кг"
-    if "евро" in t:
-        eur_match = re.search(r'(\d+(?:[.,]\d+)?)\s*евро', t)
-        eur_val = float(eur_match.group(1).replace(',', '.')) if eur_match else 0
-        return {"type": "fixed_eur", "formula": tariff_str, "value": eur_val}
-    
-    return {"type": "", "formula": tariff_str, "value": 0}
+    if eur_val:
+        return {"type": "fixed_eur", "formula": tariff_str, "value": 0, "eur_per_kg": eur_val}
+
+    return {"type": "", "formula": tariff_str, "value": 0, "eur_per_kg": 0}
