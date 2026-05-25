@@ -535,48 +535,27 @@ async def handle_text(message: Message):
             else:
                 context_parts.append("\nВ БД нет точных совпадений по материалу.")
             
-            # === ПОИСК ПО БАЗЕ ЗНАНИЙ (добавляем во все сценарии) ===
+            # === ПОИСК ПО БАЗЕ ЗНАНИЙ — векторный ===
             try:
-                all_knowledge = get_knowledge()
-                if all_knowledge:
+                from services.embeddings import get_embedding
+                from database import vector_search, search_knowledge
+                query_vec = await get_embedding(user_text)
+                if query_vec:
+                    kb_results = vector_search(query_vec, top_n=2, min_score=0.3)
+                else:
+                    # Fallback на keyword если embeddings недоступны
                     kb_words = {w for w in re.findall(r'[а-яёa-z]{3,}', text_lower) if w not in STOP_WORDS}
                     for w in list(kb_words):
                         lemma = lemmatize_russian(w)
-                        if lemma != w:
-                            kb_words.add(lemma)
-                    # Связанный поиск: расширяем запрос
-                    related = {
-                        "декларант": ["контакт", "телефон", "email", "анна", "михаил", "александра"],
-                        "контакт": ["декларант", "анна", "михаил", "александра"],
-                        "анна": ["декларант", "контакт", "телефон"],
-                        "михаил": ["декларант", "контакт", "код", "тн вэд"],
-                        "александра": ["декларант", "контакт", "таможен", "платеж"],
-                    }
-                    for w in list(kb_words):
-                        if w in related:
-                            kb_words.update(related[w])
-                    if kb_words:
-                        kb_matched = []
-                        for k in all_knowledge:
-                            topic_lower = k.get("topic", "").lower()
-                            content_lower = k.get("content", "").lower()
-                            score = 0
-                            for qw in kb_words:
-                                if qw in topic_lower:
-                                    score += 5
-                                if qw in content_lower:
-                                    score += 2
-                            if score > 0:
-                                kb_matched.append((score, k))
-                        if kb_matched:
-                            kb_matched.sort(key=lambda x: -x[0])
-                            context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
-                            # Берём топ-5 секций для полноты ответа
-                            for i, (score, k) in enumerate(kb_matched[:5], 1):
-                                topic = k.get("topic", "")
-                                content = k.get("content", "")[:3000]
-                                context_parts.append(f"\n--- Тема {i}: {topic} ---\n{content}")
-                            context_parts.append("\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.")
+                        if lemma != w: kb_words.add(lemma)
+                    kb_results = search_knowledge(kb_words, top_n=2)
+                if kb_results:
+                    context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
+                    for k in kb_results:
+                        topic = k.get("topic", "")
+                        content = k.get("content", "")[:4000]
+                        context_parts.append(f"\n--- {topic} ---\n{content}")
+                    context_parts.append("\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай. НЕ выдумывай.")
             except Exception as e:
                 logger.warning(f"KB search error: {e}")
         
@@ -760,54 +739,28 @@ async def handle_text(message: Message):
             "Правило: если контакт не пришёл в контексте — его не существует для тебя."
         )
         
-        # === ПОИСК ПО БАЗЕ ЗНАНИЙ ===
-        from database import get_all_knowledge
+        # === ПОИСК ПО БАЗЕ ЗНАНИЙ — векторный ===
         try:
-            all_knowledge = get_all_knowledge()
-            if all_knowledge:
-                # Извлекаем ключевые слова, фильтруем стоп-слова
+            from services.embeddings import get_embedding
+            from database import vector_search, search_knowledge
+            query_vec = await get_embedding(user_text)
+            if query_vec:
+                kb_results = vector_search(query_vec, top_n=2, min_score=0.3)
+            else:
+                # Fallback на keyword если embeddings недоступны
                 raw_words = set(re.findall(r'[а-яёa-z]{3,}', text_lower))
                 query_words = {w for w in raw_words if w not in STOP_WORDS}
-                # Добавляем лемматизированные формы
                 for w in list(query_words):
                     lemma = lemmatize_russian(w)
-                    if lemma != w:
-                        query_words.add(lemma)
-                
-                if query_words:
-                    # Связанный поиск: контакты → декларант, декларант → контакты
-                    related = {"контакт": ["декларант", "агент", "поставщик", "менеджер"],
-                               "декларант": ["контакт", "телефон", "email"],
-                               "телефон": ["контакт", "декларант"],
-                               "контакты": ["декларант", "агент", "поставщик"]}
-                    for w in list(query_words):
-                        if w in related:
-                            query_words.update(related[w])
-                    
-                    # Ищем совпадения по полному content
-                    matched = []
-                    for k in all_knowledge:
-                        topic_lower = k.get("topic", "").lower()
-                        full_content = k.get("content", "")
-                        content_lower = full_content.lower()
-                        score = 0
-                        for qw in query_words:
-                            if qw in topic_lower:
-                                score += 5  # topic — важнее
-                            if qw in content_lower:
-                                score += 2
-                        if score > 0:
-                            matched.append((score, k))
-                    
-                    # Берём топ-5 совпадений для полноты
-                    matched.sort(key=lambda x: -x[0])
-                    if matched:
-                        extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
-                        for i, (score, k) in enumerate(matched[:5], 1):
-                            topic = k.get("topic", "")
-                            content = k.get("content", "")[:3000]
-                            extra += f"\n--- Тема {i}: {topic} ---\n{content}\n"
-                        extra += "\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.\n"
+                    if lemma != w: query_words.add(lemma)
+                kb_results = search_knowledge(query_words, top_n=2)
+            if kb_results:
+                extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
+                for k in kb_results:
+                    topic = k.get("topic", "")
+                    content = k.get("content", "")[:4000]
+                    extra += f"\n--- {topic} ---\n{content}\n"
+                extra += "\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай. НЕ выдумывай данных которых нет в контексте.\n"
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
         
