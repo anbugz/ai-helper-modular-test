@@ -1,562 +1,393 @@
-"""
-database.py — все операции с SQLite.
-Импортирует только config (DB_PATH, logger, VERSION).
-"""
 import sqlite3
 import os
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-from io import BytesIO
-from config import DB_PATH, logger
+import logging
+from datetime import datetime
+from config import DB_PATH
+
+logger = logging.getLogger(__name__)
+
+# Глобальное соединение с БД
+conn = None
 
 
-# ------------------------------------------------------------------
-# Инициализация
-# ------------------------------------------------------------------
-
-def init_db() -> None:
-    """Создаёт директорию и таблицы, если их нет."""
+def init_db():
+    """Инициализация базы данных и создание таблиц, если их нет."""
+    global conn
+    
+    # Убедимся, что директория для БД существует
     db_dir = os.path.dirname(DB_PATH)
-    if db_dir:
+    if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
-    logger.info(f"[DB] Using database at: {DB_PATH}")
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("PRAGMA journal_mode=WAL")
-    c.executescript("""
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")       # Ускорение параллельной записи
+    conn.execute("PRAGMA foreign_keys=ON")
+    
+    cursor = conn.cursor()
+    
+    # Таблица диалогов
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS dialogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            role TEXT,
-            content TEXT,
-            created_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS corrections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            original TEXT,
-            correction TEXT,
-            created_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS custom_radio_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT UNIQUE,
-            added_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );
-        CREATE TABLE IF NOT EXISTS knowledge_base (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic TEXT,
-            content TEXT,
-            questions TEXT,
-            added_by TEXT,
-            created_at TEXT
-        );
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Индексы для таблицы диалогов
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_dialogs_user_ts 
+        ON dialogs(user_id, timestamp DESC)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_dialogs_timestamp 
+        ON dialogs(timestamp)
+    """)
+    
+    # Таблица кэша ТН ВЭД
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS tnved_cache (
             code TEXT PRIMARY KEY,
-            name TEXT,
+            name TEXT NOT NULL,
             tariff TEXT,
-            parsed_type TEXT,
-            parsed_formula TEXT,
-            loaded_at TEXT
-        );
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Индексы для ТН ВЭД
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tnved_name 
+        ON tnved_cache(name)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tnved_code_prefix 
+        ON tnved_cache(code)
+    """)
+    
+    # Таблица базы знаний
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_base (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            section_title TEXT,
+            content TEXT NOT NULL,
+            added_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Индексы для базы знаний
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kb_topic 
+        ON knowledge_base(topic)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kb_section_title 
+        ON knowledge_base(section_title)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kb_created_at 
+        ON knowledge_base(created_at DESC)
+    """)
+    
+    # Таблица исправлений пользователей
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS corrections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            user_message TEXT,
+            bot_response TEXT,
+            correction_note TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Индексы для исправлений
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_corrections_user 
+        ON corrections(user_id, created_at DESC)
+    """)
+    
+    # Таблица заблокированных пользователей
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS blocked_users (
             user_id INTEGER PRIMARY KEY,
-            blocked_at TEXT,
+            blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             reason TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_tnved_name ON tnved_cache(name);
+        )
     """)
+    
+    # Таблица кодов радиоэлектроники
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS custom_radio_codes (
+            code TEXT PRIMARY KEY,
+            description TEXT,
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     conn.commit()
-    conn.close()
-    logger.info("База данных инициализирована.")
+    logger.info(f"База данных инициализирована: {DB_PATH}")
+    
+    # Выводим статистику для мониторинга
+    stats = get_db_stats()
+    logger.info(f"Статистика БД: диалогов={stats['dialogs']}, "
+                f"ТН ВЭД={stats['tnved']}, БЗ={stats['knowledge']}, "
+                f"исправлений={stats['corrections']}")
+    
+    return conn
 
 
-# ------------------------------------------------------------------
-# Диалоги
-# ------------------------------------------------------------------
-
-def save_message(user_id: int, username: str, role: str, content: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO dialogs (user_id, username, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, username, role, content, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-    )
-    conn.commit()
-    conn.close()
+def get_connection():
+    """Получить текущее соединение с БД."""
+    global conn
+    if conn is None:
+        init_db()
+    return conn
 
 
-def get_dialog_history(user_id: int, limit: int = 20) -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT role, content FROM dialogs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-        (user_id, limit),
-    )
+def get_recent_history(user_id: int, limit: int = 20) -> list:
+    """
+    Получить последние сообщения пользователя для контекста AI.
+    
+    Args:
+        user_id: Telegram ID пользователя
+        limit: Максимальное количество сообщений
+    
+    Returns:
+        Список словарей [{"role": "user/assistant", "content": "..."}]
+    """
+    c = get_connection().cursor()
+    c.execute("""
+        SELECT role, content FROM dialogs 
+        WHERE user_id = ? 
+        ORDER BY timestamp DESC 
+        LIMIT ?
+    """, (user_id, limit))
+    
     rows = c.fetchall()
-    conn.close()
-    return [{"role": r, "content": c} for r, c in reversed(rows)]
+    rows.reverse()  # От старых к новым
+    
+    return [{"role": row["role"], "content": row["content"]} for row in rows]
 
 
-def clear_history(user_id: int) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM dialogs WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+def save_message(user_id: int, role: str, content: str):
+    """Сохранить сообщение в историю диалога."""
+    c = get_connection().cursor()
+    c.execute("""
+        INSERT INTO dialogs (user_id, role, content) 
+        VALUES (?, ?, ?)
+    """, (user_id, role, content))
+    get_connection().commit()
 
 
-def get_dialogs_for_export(
-    date_from: Optional[str] = None, date_to: Optional[str] = None
-) -> List[Tuple]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    query = "SELECT user_id, username, role, content, created_at FROM dialogs WHERE 1=1"
-    params = []
-    if date_from:
-        query += " AND created_at >= ?"
-        params.append(f"{date_from} 00:00:00")
-    if date_to:
-        query += " AND created_at <= ?"
-        params.append(f"{date_to} 23:59:59")
-    query += " ORDER BY created_at"
-    c.execute(query, params)
+def search_knowledge_base(query: str, limit: int = 5) -> list:
+    """
+    Поиск по базе знаний с поддержкой связанных терминов.
+    
+    Args:
+        query: Поисковый запрос
+        limit: Максимальное количество результатов
+    
+    Returns:
+        Список найденных секций [{"topic": ..., "section_title": ..., "content": ...}]
+    """
+    c = get_connection().cursor()
+    
+    # Разбиваем запрос на слова и ищем каждое
+    terms = query.lower().split()
+    if not terms:
+        return []
+    
+    # Строим SQL с несколькими LIKE
+    conditions = " OR ".join(["content LIKE ?" for _ in terms])
+    params = [f"%{term}%" for term in terms]
+    
+    c.execute(f"""
+        SELECT topic, section_title, content FROM knowledge_base 
+        WHERE {conditions}
+        ORDER BY created_at DESC 
+        LIMIT ?
+    """, params + [limit])
+    
     rows = c.fetchall()
-    conn.close()
-    return rows
+    return [{"topic": row["topic"], "section_title": row["section_title"], 
+             "content": row["content"]} for row in rows]
 
 
-# ------------------------------------------------------------------
-# Исправления / замечания
-# ------------------------------------------------------------------
-
-def save_correction(
-    user_id: int, username: str, original: str, correction: str
-) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO corrections (user_id, username, original, correction, created_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, username, original, correction, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-    )
-    conn.commit()
-    conn.close()
+def get_knowledge_topics() -> list:
+    """Получить список всех уникальных тем в базе знаний."""
+    c = get_connection().cursor()
+    c.execute("SELECT DISTINCT topic FROM knowledge_base ORDER BY topic")
+    return [row["topic"] for row in c.fetchall()]
 
 
-def get_all_corrections() -> List[Tuple]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT user_id, username, original, correction, created_at FROM corrections ORDER BY created_at DESC"
-    )
+def add_knowledge(topic: str, section_title: str, content: str, added_by: int):
+    """Добавить секцию в базу знаний."""
+    c = get_connection().cursor()
+    c.execute("""
+        INSERT INTO knowledge_base (topic, section_title, content, added_by) 
+        VALUES (?, ?, ?, ?)
+    """, (topic, section_title, content, added_by))
+    get_connection().commit()
+    logger.info(f"Добавлена секция в БЗ: topic={topic}, title={section_title}")
+
+
+def get_tnved_by_code(code: str) -> dict:
+    """Получить информацию о коде ТН ВЭД."""
+    c = get_connection().cursor()
+    c.execute("SELECT code, name, tariff FROM tnved_cache WHERE code = ?", (code,))
+    row = c.fetchone()
+    if row:
+        return {"code": row["code"], "name": row["name"], "tariff": row["tariff"]}
+    return None
+
+
+def search_tnved_by_name(query: str, limit: int = 10) -> list:
+    """Поиск кодов ТН ВЭД по наименованию."""
+    c = get_connection().cursor()
+    c.execute("""
+        SELECT code, name, tariff FROM tnved_cache 
+        WHERE name LIKE ? 
+        LIMIT ?
+    """, (f"%{query}%", limit))
+    
     rows = c.fetchall()
-    conn.close()
-    return rows
+    return [{"code": row["code"], "name": row["name"], "tariff": row["tariff"]} 
+            for row in rows]
 
 
-# ------------------------------------------------------------------
-# База знаний
-# ------------------------------------------------------------------
+def add_tnved_codes(codes: list):
+    """
+    Пакетная вставка или обновление кодов ТН ВЭД.
+    
+    Args:
+        codes: Список словарей [{"code": ..., "name": ..., "tariff": ...}]
+    """
+    c = get_connection().cursor()
+    for item in codes:
+        c.execute("""
+            INSERT OR REPLACE INTO tnved_cache (code, name, tariff, updated_at) 
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """, (item["code"], item["name"], item.get("tariff", "")))
+    get_connection().commit()
+    logger.info(f"Загружено/обновлено кодов ТН ВЭД: {len(codes)}")
 
-def save_knowledge(topic: str, content: str, questions: str, added_by: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
-        (topic, content, questions, added_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-    )
-    conn.commit()
-    conn.close()
+
+def add_correction(user_id: int, user_message: str, bot_response: str, correction_note: str):
+    """Сохранить исправление от пользователя."""
+    c = get_connection().cursor()
+    c.execute("""
+        INSERT INTO corrections (user_id, user_message, bot_response, correction_note) 
+        VALUES (?, ?, ?, ?)
+    """, (user_id, user_message, bot_response, correction_note))
+    get_connection().commit()
+    logger.info(f"Сохранено исправление от user {user_id}")
 
 
-def save_knowledge_sections(sections: list, added_by: str) -> int:
-    """Сохраняет список секций (topic, content) в БЗ. Возвращает количество сохранённых."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    count = 0
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    for topic, content in sections:
-        if content.strip():
-            c.execute(
-                "INSERT INTO knowledge_base (topic, content, questions, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
-                (topic[:255], content, "", added_by, now),
-            )
-            count += 1
-    conn.commit()
-    conn.close()
+def is_user_blocked(user_id: int) -> bool:
+    """Проверить, заблокирован ли пользователь."""
+    c = get_connection().cursor()
+    c.execute("SELECT user_id FROM blocked_users WHERE user_id = ?", (user_id,))
+    return c.fetchone() is not None
+
+
+def block_user(user_id: int, reason: str = ""):
+    """Заблокировать пользователя."""
+    c = get_connection().cursor()
+    c.execute("""
+        INSERT OR REPLACE INTO blocked_users (user_id, blocked_at, reason) 
+        VALUES (?, CURRENT_TIMESTAMP, ?)
+    """, (user_id, reason))
+    get_connection().commit()
+    logger.info(f"Заблокирован пользователь {user_id}")
+
+
+def unblock_user(user_id: int):
+    """Разблокировать пользователя."""
+    c = get_connection().cursor()
+    c.execute("DELETE FROM blocked_users WHERE user_id = ?", (user_id,))
+    get_connection().commit()
+    logger.info(f"Разблокирован пользователь {user_id}")
+
+
+def get_db_stats() -> dict:
+    """Получить статистику по таблицам БД."""
+    c = get_connection().cursor()
+    stats = {}
+    for table in ["dialogs", "tnved_cache", "knowledge_base", "corrections"]:
+        c.execute(f"SELECT COUNT(*) as count FROM {table}")
+        stats[table] = c.fetchone()["count"]
+    return stats
+
+
+def cleanup_old_dialogs(retention_days: int = 90) -> int:
+    """
+    Удалить диалоги старше указанного количества дней.
+    
+    Args:
+        retention_days: Срок хранения диалогов в днях (по умолчанию 90)
+    
+    Returns:
+        Количество удалённых записей
+    """
+    c = get_connection().cursor()
+    c.execute("""
+        SELECT COUNT(*) as count FROM dialogs 
+        WHERE timestamp < datetime('now', '-' || ? || ' days')
+    """, (retention_days,))
+    count = c.fetchone()["count"]
+    
+    if count > 0:
+        c.execute("""
+            DELETE FROM dialogs 
+            WHERE timestamp < datetime('now', '-' || ? || ' days')
+        """, (retention_days,))
+        get_connection().commit()
+        logger.info(f"Очищено старых диалогов: {count}")
+    
     return count
 
 
-def get_all_knowledge() -> List[Dict]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT topic, content, questions, added_by, created_at FROM knowledge_base")
-    rows = c.fetchall()
-    conn.close()
-    return [
-        {
-            "topic": r[0],
-            "content": r[1],
-            "questions": r[2],
-            "added_by": r[3],
-            "created_at": r[4],
-        }
-        for r in rows
-    ]
-
-
-# Alias для совместимости
-get_knowledge = get_all_knowledge
-
-
-def get_knowledge_by_topic(topic: str) -> Optional[Dict]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT topic, content, questions, added_by, created_at FROM knowledge_base WHERE topic = ?", (topic,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return None
-    return {
-        "topic": row[0],
-        "content": row[1],
-        "questions": row[2],
-        "added_by": row[3],
-        "created_at": row[4],
-    }
-
-
-# ------------------------------------------------------------------
-# Settings
-# ------------------------------------------------------------------
-
-def get_setting(key: str) -> Optional[str]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-
-def set_setting(key: str, value: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        (key, value),
-    )
-    conn.commit()
-    conn.close()
-
-
-# ------------------------------------------------------------------
-# Радиоэлектроника — кастомные коды
-# ------------------------------------------------------------------
-
-def add_custom_radio_code(code: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        c.execute(
-            "INSERT INTO custom_radio_codes (code, added_at) VALUES (?, ?)",
-            (code, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        pass
-    conn.close()
-
-
-def save_custom_codes(codes: List[str]) -> int:
-    """Сохраняет список кодов радиоэлектроники в таблицу custom_radio_codes.
-    Возвращает количество добавленных кодов.
+def export_dialogs(start_date: str = None, end_date: str = None) -> list:
     """
-    if not codes:
-        return 0
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    added = 0
-    for code in codes:
-        try:
-            c.execute(
-                "INSERT OR IGNORE INTO custom_radio_codes (code, added_at) VALUES (?, ?)",
-                (code, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-            )
-            if c.rowcount > 0:
-                added += 1
-        except sqlite3.Error:
-            continue
-    conn.commit()
-    conn.close()
-    logger.info(f"Сохранено {added} новых кодов радиоэлектроники")
-    return added
-
-
-def get_all_custom_radio_codes() -> List[str]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT code FROM custom_radio_codes")
-    rows = [r[0] for r in c.fetchall()]
-    conn.close()
-    return rows
-
-
-# ------------------------------------------------------------------
-# ТН ВЭД — кэш
-# ------------------------------------------------------------------
-
-def save_tnved_batch(raw_rows: List, parsed_rows: List) -> None:
-    """Сохраняет или обновляет коды ТН ВЭД в SQLite-кэше."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    for raw, parsed in zip(raw_rows, parsed_rows):
-        code = raw[0] if raw else ""
-        name = raw[1] if len(raw) > 1 else ""
-        tariff = raw[2] if len(raw) > 2 else ""
-        code_clean = code.replace(" ", "")
-        c.execute(
-            """
-            INSERT OR REPLACE INTO tnved_cache (code, name, tariff, parsed_type, parsed_formula, loaded_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                code_clean,
-                name,
-                tariff,
-                parsed.get("type", ""),
-                parsed.get("formula", ""),
-                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
-    conn.commit()
-    conn.close()
-    logger.info(f"TNVED: сохранено {len(raw_rows)} кодов в БД")
-
-
-def get_tnved_from_db(code: str) -> Optional[Dict]:
-    """Получает код ТН ВЭД из SQLite-кэша."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT code, name, tariff, parsed_type, parsed_formula FROM tnved_cache WHERE code = ?", (code,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return None
-    return {
-        "code": row[0],
-        "name": row[1],
-        "tariff": row[2],
-        "parsed_tariff": {"type": row[3], "formula": row[4]},
-    }
-
-
-def search_tnved_in_db(query: str) -> List[Dict]:
-    """Поиск по наименованию в SQLite-кэше."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT code, name, tariff, parsed_type, parsed_formula FROM tnved_cache WHERE name LIKE ? LIMIT 10",
-        (f"%{query}%",),
-    )
-    rows = c.fetchall()
-    conn.close()
-    return [
-        {
-            "code": r[0],
-            "name": r[1],
-            "tariff": r[2],
-            "parsed_tariff": {"type": r[3], "formula": r[4]},
-        }
-        for r in rows
-    ]
-
-
-def get_all_tnved_from_db() -> List[List[str]]:
-    """Получает ВСЕ коды из SQLite для восстановления кэша при старте."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT code, name, tariff FROM tnved_cache ORDER BY code")
-    rows = c.fetchall()
-    conn.close()
-    logger.info(f"TNVED кэш: загружено {len(rows)} кодов из БД")
-    return [[r[0], r[1], r[2]] for r in rows]
-
-
-def clear_tnved_cache_db() -> int:
-    """Очищает таблицу tnved_cache. Возвращает количество удалённых записей."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM tnved_cache")
-    count = c.fetchone()[0]
-    c.execute("DELETE FROM tnved_cache")
-    conn.commit()
-    conn.close()
-    logger.info(f"TNVED кэш: удалено {count} кодов из БД")
-    return count
-
-
-def get_tnved_stats() -> dict:
-    """Статистика по кэшу ТН ВЭД в БД."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*), parsed_type FROM tnved_cache GROUP BY parsed_type")
-    stats = dict(c.fetchall())
-    c.execute("SELECT COUNT(DISTINCT code) FROM tnved_cache")
-    total = c.fetchone()[0]
-    conn.close()
-    return {"total": total, "by_type": stats}
-
-
-# ------------------------------------------------------------------
-# Экспорт логов в XLSX (через zipfile + xml, без openpyxl)
-# ------------------------------------------------------------------
-
-def _col_letter(idx: int) -> str:
-    """Преобразует индекс колонки (0-based) в буквенное обозначение (A, B, ..., Z, AA, ...)."""
-    result = ""
-    while idx >= 0:
-        result = chr(65 + (idx % 26)) + result
-        idx = idx // 26 - 1
-    return result
-
-
-def _escape_xml(text: str) -> str:
-    """Экранирует XML-спецсимволы и переводы строк."""
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-    text = text.replace("\r\n", "&#10;").replace("\n", "&#10;").replace("\r", "&#10;")
-    return text
-
-
-def create_logs_xlsx(rows: List[Tuple], sheet_name: str = "logs") -> bytes:
-    """Генерирует .xlsx через sharedStrings.xml (стандартный формат Excel).
-    Совместимость: Excel, LibreOffice, Google Sheets.
+    Экспорт диалогов для команды 'выгрузи логи'.
+    
+    Args:
+        start_date: Начальная дата в формате YYYY-MM-DD
+        end_date: Конечная дата в формате YYYY-MM-DD
+    
+    Returns:
+        Список словарей с данными диалогов
     """
-    import zipfile
-
-    ct_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
-
-    # Собираем уникальные строки
-    strings: List[str] = []
-    str_index: Dict[str, int] = {}
-
-    def add_str(s: str) -> int:
-        s = str(s) if s is not None else ""
-        if s not in str_index:
-            str_index[s] = len(strings)
-            strings.append(s)
-        return str_index[s]
-
-    # Заголовки
-    headers = ["user_id", "username", "role", "content", "created_at"]
-    header_indices = [add_str(h) for h in headers]
-
-    # Данные
-    data_indices: List[List[int]] = []
-    for row in rows:
-        data_indices.append([add_str(v) for v in row])
-
-    # --- sharedStrings.xml ---
-    ss_parts = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
-        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        f'count="{len(strings)}" uniqueCount="{len(strings)}">\n',
-    ]
-    for s in strings:
-        ss_parts.append(f'  <si><t xml:space="preserve">{_escape_xml(s)}</t></si>\n')
-    ss_parts.append('</sst>')
-    ss_xml = "".join(ss_parts).encode("utf-8")
-
-    # --- workbook.xml ---
-    wb_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n'
-        '  <sheets>\n'
-        f'    <sheet name="{_escape_xml(sheet_name)}" sheetId="1" r:id="rId1"/>\n'
-        '  </sheets>\n'
-        '  <calcPr calcId="124519" fullCalcOnLoad="1"/>\n'
-        '</workbook>'
-    ).encode("utf-8")
-
-    # --- worksheet.xml ---
-    max_col = 4
-    max_row = len(rows) + 1
-    ws_parts = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">\n',
-        f'  <dimension ref="A1:{_col_letter(max_col)}{max_row}"/>\n',
-        '  <sheetData>\n',
-    ]
-    # Заголовок
-    ws_parts.append('    <row r="1">\n')
-    for c_idx, si in enumerate(header_indices):
-        cell_ref = f"{_col_letter(c_idx)}1"
-        ws_parts.append(f'      <c r="{cell_ref}" t="s"><v>{si}</v></c>\n')
-    ws_parts.append('    </row>\n')
-    # Данные
-    for r_idx, row_indices in enumerate(data_indices, 2):
-        ws_parts.append(f'    <row r="{r_idx}">\n')
-        for c_idx, si in enumerate(row_indices):
-            cell_ref = f"{_col_letter(c_idx)}{r_idx}"
-            ws_parts.append(f'      <c r="{cell_ref}" t="s"><v>{si}</v></c>\n')
-        ws_parts.append('    </row>\n')
-    ws_parts.append('  </sheetData>\n')
-    ws_parts.append('</worksheet>')
-    ws_xml = "".join(ws_parts).encode("utf-8")
-
-    # --- workbook.xml.rels ---
-    wb_rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
-        'Target="worksheets/sheet1.xml"/>\n'
-        '  <Relationship Id="rId2" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" '
-        'Target="sharedStrings.xml"/>\n'
-        '</Relationships>'
-    ).encode("utf-8")
-
-    # --- [Content_Types].xml ---
-    ct_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<Types xmlns="{ct_ns}">\n'
-        '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
-        '  <Default Extension="xml" ContentType="application/xml"/>\n'
-        '  <Override PartName="/xl/workbook.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>\n'
-        '  <Override PartName="/xl/worksheets/sheet1.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
-        '  <Override PartName="/xl/sharedStrings.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>\n'
-        '</Types>'
-    ).encode("utf-8")
-
-    # --- .rels ---
-    root_rels = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
-        'Target="xl/workbook.xml"/>\n'
-        '</Relationships>'
-    ).encode("utf-8")
-
-    # --- сборка zip ---
-    xlsx_buffer = BytesIO()
-    with zipfile.ZipFile(xlsx_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", ct_xml)
-        zf.writestr("_rels/.rels", root_rels)
-        zf.writestr("xl/_rels/workbook.xml.rels", wb_rels_xml)
-        zf.writestr("xl/workbook.xml", wb_xml)
-        zf.writestr("xl/worksheets/sheet1.xml", ws_xml)
-        zf.writestr("xl/sharedStrings.xml", ss_xml)
-
-    return xlsx_buffer.getvalue()
+    c = get_connection().cursor()
+    
+    if start_date and end_date:
+        c.execute("""
+            SELECT user_id, role, content, timestamp 
+            FROM dialogs 
+            WHERE date(timestamp) BETWEEN ? AND ?
+            ORDER BY timestamp
+        """, (start_date, end_date))
+    elif start_date:
+        c.execute("""
+            SELECT user_id, role, content, timestamp 
+            FROM dialogs 
+            WHERE date(timestamp) >= ?
+            ORDER BY timestamp
+        """, (start_date,))
+    else:
+        c.execute("""
+            SELECT user_id, role, content, timestamp 
+            FROM dialogs 
+            ORDER BY timestamp DESC 
+            LIMIT 1000
+        """)
+    
+    rows = c.fetchall()
+    return [{"user_id": row["user_id"], "role": row["role"], 
+             "content": row["content"], "timestamp": row["timestamp"]} 
+            for row in rows]
