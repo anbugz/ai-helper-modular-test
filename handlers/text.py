@@ -169,6 +169,7 @@ VED_INTENT_KEYWORDS = (
     "хлопок", "хлопчатобумажн", "шерсть", "шерстяной", "шёлк", "шелк", "шелковый",
     "лён", "лен ", "льняной", "синтетика", "полиэстер", "полиэфир", "акрил",
     "кожа", "кожаный", "сталь", "нержавейка", "алюминий", "медь", "латунь", "цинк",
+    "телефон", "смартфон", "ноутбук", "компьютер", "планшет", "монитор", "телевизор",
     # Категории товаров
     "ткань", "ткани", "трикотаж", "текстиль", "материал", "сырьё", "сырье",
     "одежда", "обувь", "куртка", "пальто", "пуховик", "рубашка", "блузка", "футболка",
@@ -251,33 +252,31 @@ async def handle_text(message: Message):
         if reason == "USER_BLOCKED":
             await message.answer("⛔ Ваш аккаунт временно заблокирован за подозрительную активность.")
             return
-
+        
         logger.warning(f"SECURITY BLOCKED [{reason}] from user {user_id}: {user_text[:100]}")
-
+        
+        # Определяем, забанен ли пользователь
         user_banned = is_blocked(user_id)
-
+        
         await message.answer(
-            "⛔ Запрос отклонён по политике безопасности.
-"
+            "⛔ Запрос отклонён по политике безопасности.\n"
             "Если это легитимный запрос — обратитесь к администратору."
         )
-
+        
+        # Уведомление админу
         if ADMIN_ID:
             try:
-                block_msg = "
-🚫 Пользователь ЗАБЛОКИРОВАН" if user_banned else ""
+                block_msg = "\n🚫 Пользователь ЗАБЛОКИРОВАН" if user_banned else ""
                 await bot.send_message(
                     ADMIN_ID,
-                    f"⚠️ <b>SECURITY: {reason}</b>{block_msg}
-"
-                    f"User: <code>{user_id}</code>
-"
+                    f"⚠️ <b>SECURITY: {reason}</b>{block_msg}\n"
+                    f"User: <code>{user_id}</code>\n"
                     f"Text: <code>{user_text[:200]}</code>",
                 )
             except Exception:
                 pass
         return
-
+    
     # === PII-ФИЛЬТР (логирование) ===
     has_pii, pii_types = contains_pii(user_text)
     if has_pii:
@@ -285,10 +284,10 @@ async def handle_text(message: Message):
         user_text_clean = redact_pii(user_text)
     else:
         user_text_clean = user_text
-
+    
     text_lower = user_text_clean.lower()
 
-    # === ОБРАБОТКА ТРАНСЛИТА ===
+    # === ОБРАБОТКА ТРАНСЛИТА (vatnye volokna → ватные волокна) ===
     has_cyrillic = bool(re.search(r'[а-яё]', text_lower))
     has_latin = bool(re.search(r'[a-z]', text_lower))
     if not has_cyrillic and has_latin:
@@ -342,8 +341,7 @@ async def handle_text(message: Message):
 
     # === РЕЖИМ ОБУЧЕНИЯ ===
     if user_id in LEARN_MODE:
-        LEARN_MODE[user_id]["content"] += "
-" + user_text
+        LEARN_MODE[user_id]["content"] += "\n" + user_text
         await message.answer("✅ Записано.")
         return
 
@@ -356,26 +354,19 @@ async def handle_text(message: Message):
 
     # === ИЗВЛЕЧЕНИЕ КОДОВ ТН ВЭД ===
     codes = extract_tnved_codes(user_text)
+    radio_detected = any(is_radio_electronics(c) for c in codes)
 
-    # === ПОДГРУЗКА КОРОТКИХ КОДОВ ИЗ БД ===
     found_codes = []
     missing = []
     if codes:
         for c in codes[:3]:
             info = get_tnved_from_cache(c)
             if info:
+                # Очищаем наименование от некорректных символов
                 info["name"] = info.get("name", "").replace("🠺", "→").replace("🠔", "←").strip()
                 found_codes.append(info)
             else:
                 missing.append(c)
-
-    radio_detected = any(is_radio_electronics(c) for c in codes)
-
-    # === ОПРЕДЕЛЕНИЕ НДС ЗАРАНЕЕ ===
-    vat_rate = 0.22
-    ti = found_codes[0] if found_codes else None
-    if ti and any(w in ti.get("name", "").lower() for w in ("пищев", "детск", "медиц", "книг", "печат")):
-        vat_rate = 0.10
 
     # === ОПРЕДЕЛЕНИЕ ТИПА ЗАПРОСА ===
     calc_words = (
@@ -384,22 +375,14 @@ async def handle_text(message: Message):
         "фрахт", "страховк", "посчитай", "сколько будет",
         "узнать плат", "сколько плат",
     )
-
-    # Удаляем ТОЛЬКО найденные коды ТН ВЭД для поиска сумм
-    text_normalized = re.sub(r"(\d)\s+(?=\d)", r"", user_text)
-    text_no_codes = text_normalized
-    for c in codes:
-        text_no_codes = text_no_codes.replace(c, "")
-
+    # Удаляем коды ТН ВЭД из текста (нормализуем пробелы), потом ищем суммы
+    text_normalized = re.sub(r"(\d)\s+(?=\d)", r"\1", user_text)
+    text_no_codes = re.sub(r"\d{8,10}", "", text_normalized)
     # Проверяем наличие числа ≥ 1000 (инвойс/фрахт/страховка)
     has_amount = bool(re.search(r"(?<!\d)\d{4,}(?!\d)", text_no_codes))
-
-    # Если есть PII и нет явного кода/суммы — не считать ВЭД-запросом
-    is_calc = False
-    if has_pii and not codes and not has_amount:
-        is_calc = False
-    else:
-        is_calc = any(w in text_lower for w in calc_words) or (bool(found_codes) and has_amount)
+    is_calc = any(w in text_lower for w in calc_words) or (
+        bool(found_codes) and has_amount
+    )
 
     # === СЦЕНАРИЙ 2: БЫСТРЫЙ ОТВЕТ ПО КОДУ (без расчёта) ===
     if codes and found_codes and not is_calc:
@@ -418,27 +401,19 @@ async def handle_text(message: Message):
         )
         name_clean = info["name"].replace("🠺", "→").replace("🠔", "←")
         radio = (
-            "
-
-⚡ <b>РАДИОСБОР:</b> 73 860 ₽ (фиксированный)
-"
+            "\n\n⚡ <b>РАДИОСБОР:</b> 73 860 ₽ (фиксированный)\n"
             "   <i>По Приложению №1 к ПП РФ №1637</i>"
             if any(is_radio_electronics(c) for c in codes)
             else ""
         )
         await safe_send(
             message,
-            f"📋 <code>{info['code']}</code>
-"
-            f"🔧 {name_clean}
-"
-            f"💰 Пошлина: {info['tariff']} — {duty_type}
-"
+            f"📋 <code>{info['code']}</code>\n"
+            f"🔧 {name_clean}\n"
+            f"💰 Пошлина: {info['tariff']} — {duty_type}\n"
             f"🧾 НДС: {vat}"
             f"{radio}"
-            f"
-
-📌 <i>Точную информацию уточняйте у декларанта.</i>"
+            f"\n\n📌 <i>Точную информацию уточняйте у декларанта.</i>"
         )
         return
 
@@ -449,47 +424,56 @@ async def handle_text(message: Message):
         )
         return
 
-    # === СЦЕНАРИЙ 3: ПОИСК ПО ОПИСАНИЮ ===
+    # === СЦЕНАРИЙ 3: ПОИСК ПО ОПИСАНИЮ (если нет явных кодов) ===
     if not found_codes and not codes:
+        # ДЕТЕКЦИЯ ВЭД-ИНТЕНТА
         has_ved_intent = any(kw in text_lower for kw in VED_INTENT_KEYWORDS)
-
+        
         if has_ved_intent:
+            # === БЛОК ПОИСКА ПО МАТЕРИАЛАМ ===
+            # Извлекаем ключевые слова (4+ букв)
             keywords = re.findall(r'[а-яёa-z]{4,}', text_lower)
             keywords = [w for w in keywords if w not in STOP_WORDS]
             seen = set()
             keywords = [w for w in keywords if not (w in seen or seen.add(w))]
-
+        
+            # --- Шаг 1: Поиск по маппингу материалов (с лемматизацией) ---
             matched_sections = set()
             lemmatized_hits = []
             for kw in keywords:
+                # Прямое совпадение
                 if kw in MATERIAL_MAP:
                     matched_sections.add(MATERIAL_MAP[kw])
                     lemmatized_hits.append(kw)
                 else:
+                    # Пробуем лемматизировать
                     lemma = lemmatize_russian(kw)
                     if lemma in MATERIAL_MAP:
                         matched_sections.add(MATERIAL_MAP[lemma])
                         lemmatized_hits.append(f"{kw}→{lemma}")
+                    # Пробуем проверить начало слова (хлопковой → хлоп)
                     elif len(kw) >= 5:
                         for base_key, section in MATERIAL_MAP.items():
                             if len(base_key) >= 4 and kw.startswith(base_key[:4]):
                                 matched_sections.add(section)
                                 lemmatized_hits.append(f"{kw}~{base_key}")
                                 break
-
+        
             all_results = []
             if matched_sections:
+                # Ищем коды в matched разделах
                 import sqlite3
                 from config import DB_PATH
                 conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
-
+            
                 for section in matched_sections:
                     c.execute(
                         "SELECT code, name, tariff FROM tnved_cache WHERE code LIKE ? AND name IS NOT NULL AND name != '' LIMIT 20",
                         (f"{section}%",)
                     )
                     for row in c.fetchall():
+                        # Фильтруем мусор: код должен соответствовать разделу
                         code_prefix = row[0][:4] if len(row[0]) >= 4 else row[0]
                         section_prefix = section[:4]
                         if code_prefix == section_prefix:
@@ -498,18 +482,19 @@ async def handle_text(message: Message):
                                 "section": section,
                             })
                 conn.close()
-
+        
+            # --- ВСЕГДА Используем DeepSeek с уточняющими вопросами ---
             context_parts = [
                 f"[КОНТЕКСТ: запрос на подбор кода ТН ВЭД]",
                 f"Запрос пользователя: {user_text}",
             ]
-
+        
             if lemmatized_hits:
                 context_parts.append(f"Распознанные материалы: {', '.join(lemmatized_hits)}")
-
+        
             if all_results:
-                context_parts.append(f"
-Найденные варианты кодов из БД:")
+                context_parts.append(f"\nНайденные варианты кодов из БД:")
+                # Убираем дубликаты по коду
                 seen_codes = set()
                 unique_results = []
                 for r in all_results[:8]:
@@ -520,10 +505,9 @@ async def handle_text(message: Message):
                     name = (r["name"] or "—").replace("🠺", "→").strip()
                     context_parts.append(f"  {r['code']} | {name[:120]} | {r['tariff']}")
             else:
-                context_parts.append("
-В БД нет точных совпадений по материалу.")
-
-            # ПОИСК ПО БАЗЕ ЗНАНИЙ
+                context_parts.append("\nВ БД нет точных совпадений по материалу.")
+            
+            # === ПОИСК ПО БАЗЕ ЗНАНИЙ (добавляем во все сценарии) ===
             try:
                 all_knowledge = get_knowledge()
                 if all_knowledge:
@@ -532,6 +516,7 @@ async def handle_text(message: Message):
                         lemma = lemmatize_russian(w)
                         if lemma != w:
                             kb_words.add(lemma)
+                    # Связанный поиск: расширяем запрос
                     related = {
                         "декларант": ["контакт", "телефон", "email", "анна", "михаил", "александра"],
                         "контакт": ["декларант", "анна", "михаил", "александра"],
@@ -553,72 +538,50 @@ async def handle_text(message: Message):
                                     score += 5
                                 if qw in content_lower:
                                     score += 2
-                            if score >= 5:  # минимальный порог
+                            if score > 0:
                                 kb_matched.append((score, k))
                         if kb_matched:
                             kb_matched.sort(key=lambda x: -x[0])
-                            context_parts.append("
-
-[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
+                            context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
+                            # Берём топ-5 секций для полноты ответа
                             for i, (score, k) in enumerate(kb_matched[:5], 1):
                                 topic = k.get("topic", "")
                                 content = k.get("content", "")[:3000]
-                                context_parts.append(f"
---- Тема {i}: {topic} ---
-{content}")
-                            context_parts.append("
-ВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.")
+                                context_parts.append(f"\n--- Тема {i}: {topic} ---\n{content}")
+                            context_parts.append("\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.")
             except Exception as e:
                 logger.warning(f"KB search error: {e}")
-
+        
             context_parts.append(
-                "
-
-=== ИНСТРУКЦИЯ ДЛЯ ОТВЕТА ===
-"
-                "Ты — эксперт West Asia по ВЭД, логистике и внутренним процессам компании.
-"
-                "Если в контексте выше есть ответ на вопрос пользователя — ответь на основе контекста.
-"
-                "ВАЖНО: если в контексте есть контактные данные (телефон, email, адрес, Telegram) — выведи их ПОЛНОСТЬЮ, без сокращений.
-"
-                "Если в контексте нет ответа — помоги с подбором кода ТН ВЭД:
-"
-                "1. Начни с краткого анализа: какая ГРУППА ТН ВЭД (первые 4 цифры) наиболее вероятна.
-"
-                "2. Задай 2-4 УТОЧНЯЮЩИХ ВОПРОСА — без ответов на них невозможно точно определить код:
-"
-                "   - Для тканей: плотность (г/м²), переплетение (саржа, полотняное), состав (%), отделка, ширина
-"
-                "   - Для электроники: назначение, технические характеристики
-"
-                "   - Для одежды: пол, возраст, материал, способ изготовления
-"
-                "   - Для металлов: сплав, форма, обработка
-"
-                "   - Общие: страна происхождения, назначение, технические параметры
-"
-                "3. Если есть похожие группы — укажи альтернативы с кратким пояснением.
-"
-                "4. НЕ пиши курс ЦБ. НЕ давай финальный расчёт.
-"
-                "5. В конце: '📌 Точный код подтвердите у декларанта или через предварительное решение ФТС.'
-"
+                "\n\n=== ИНСТРУКЦИЯ ДЛЯ ОТВЕТА ===\n"
+                "Ты — эксперт West Asia по ВЭД, логистике и внутренним процессам компании.\n"
+                "Если в контексте выше есть ответ на вопрос пользователя — ответь на основе контекста.\n"
+                "ВАЖНО: если в контексте есть контактные данные (телефон, email, адрес, Telegram) — выведи их ПОЛНОСТЬЮ, без сокращений.\n"
+                "Если в контексте нет ответа — помоги с подбором кода ТН ВЭД:\n"
+                "1. Начни с краткого анализа: какая ГРУППА ТН ВЭД (первые 4 цифры) наиболее вероятна.\n"
+                "2. Задай 2-4 УТОЧНЯЮЩИХ ВОПРОСА — без ответов на них невозможно точно определить код:\n"
+                "   - Для тканей: плотность (г/м²), переплетение (саржа, полотняное), состав (%), отделка, ширина\n"
+                "   - Для электроники: назначение, технические характеристики\n"
+                "   - Для одежды: пол, возраст, материал, способ изготовления\n"
+                "   - Для металлов: сплав, форма, обработка\n"
+                "   - Общие: страна происхождения, назначение, технические параметры\n"
+                "3. Если есть похожие группы — укажи альтернативы с кратким пояснением.\n"
+                "4. НЕ пиши курс ЦБ. НЕ давай финальный расчёт.\n"
+                "5. В конце: '📌 Точный код подтвердите у декларанта или через предварительное решение ФТС.'\n"
                 "6. Формат: кратко, структурировано, с эмодзи."
             )
-
-            extra = "
-".join(context_parts)
+        
+            extra = "\n".join(context_parts)
+            # Ограничиваем общий размер промпта
             if len(extra) > 12000:
-                extra = extra[:12000] + "
-...[контекст обрезан]"
+                extra = extra[:12000] + "\n...[контекст обрезан]"
             logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
+            # Подбор кода — без истории (чтобы не склеивались запросы)
             msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
             answer = await ask_deepseek(msgs)
             answer = strip_ai_assistant_junk(answer)
             logger.info(f"[KB DEBUG s4] DeepSeek answer: {answer[:500]}")
-
-            save_message(user_id, message.from_user.username or "", "assistant", answer)
+            
             await safe_send(message, answer)
             return
 
@@ -626,6 +589,9 @@ async def handle_text(message: Message):
     base_cur = detect_base_currency(user_text)
     has_ins = any(w in text_lower for w in ("страховка", "страхование"))
 
+    # Инициализация переменных (используются в обоих сценариях)
+    ti = found_codes[0] if found_codes else None
+    vat_rate = 0.22
     customs_fee_rub = 0.0
     ts_fallback = 0.0
     ts_components: Dict[str, Dict[str, Any]] = {}
@@ -658,17 +624,20 @@ async def handle_text(message: Message):
             extra += "Страховка — в ТС. "
         extra += "НЕ придумывай ставки и курсы."
 
-        # Удаляем ТОЛЬКО найденные коды ТН ВЭД перед парсингом сумм
-        text_clean_for_ts = re.sub(r"(\d)\s+(?=\d)", r"", user_text)
+        # Удаляем коды ТН ВЭД перед парсингом сумм, чтобы код не стал инвойсом
+        text_clean_for_ts = re.sub(r"(\d)\s+(?=\d)", r"\1", user_text)
+        # Теперь удаляем коды (уже без пробелов)
         for c in codes:
             text_clean_for_ts = text_clean_for_ts.replace(c, "")
-
+        
         comps = extract_ts_components_with_currency(text_clean_for_ts)
+        # Базовая валюта = валюта инвойса, если определена
         if "invoice" in comps and comps["invoice"]["currency"] != "RUB":
             base_cur = comps["invoice"]["currency"]
         else:
             base_cur = detect_base_currency(user_text)
 
+        # Вычисляем ТС в валюте инвойса с конвертацией
         if "invoice" in comps:
             inv = comps["invoice"]
             ts_fallback += inv["value"]
@@ -687,9 +656,11 @@ async def handle_text(message: Message):
                 if cur != base_cur and rates and base_cur in rates:
                     try:
                         if cur == "RUB":
+                            # RUB → валюта инвойса: делим на курс валюты
                             converted = round(val / float(rates[base_cur]), 2)
                             rate_info = f"{val:,.0f} ₽ → {converted:,.2f} {base_cur}"
                         elif cur in rates:
+                            # Чужая валюта → RUB → валюта инвойса
                             rub_val = val * float(rates[cur])
                             converted = round(rub_val / float(rates[base_cur]), 2)
                             rate_info = f"{val} {cur} → {rub_val:,.2f} ₽ → {converted:,.2f} {base_cur}"
@@ -725,25 +696,30 @@ async def handle_text(message: Message):
         else:
             customs_fee_rub = calculate_customs_fee(ts_rub_for_fee)
 
+        # ВЭД-расчёт: НЕ вызываем DeepSeek, сразу fallback
         answer = ""
 
     else:
-        # === СЦЕНАРИЙ 3: AI-АССИСТЕНТ ===
+        # === СЦЕНАРИЙ 3: AI-АССИСТЕНТ (общий вопрос) ===
         extra = "Отвечай как эксперт West Asia по ВЭД и логистике. "
         extra += "НЕ пиши курс ЦБ РФ в ответе — он будет добавлен автоматически."
-
+        
+        # === ПОИСК ПО БАЗЕ ЗНАНИЙ ===
         from database import get_all_knowledge
         try:
             all_knowledge = get_all_knowledge()
             if all_knowledge:
+                # Извлекаем ключевые слова, фильтруем стоп-слова
                 raw_words = set(re.findall(r'[а-яёa-z]{3,}', text_lower))
                 query_words = {w for w in raw_words if w not in STOP_WORDS}
+                # Добавляем лемматизированные формы
                 for w in list(query_words):
                     lemma = lemmatize_russian(w)
                     if lemma != w:
                         query_words.add(lemma)
-
+                
                 if query_words:
+                    # Связанный поиск: контакты → декларант, декларант → контакты
                     related = {"контакт": ["декларант", "агент", "поставщик", "менеджер"],
                                "декларант": ["контакт", "телефон", "email"],
                                "телефон": ["контакт", "декларант"],
@@ -751,7 +727,8 @@ async def handle_text(message: Message):
                     for w in list(query_words):
                         if w in related:
                             query_words.update(related[w])
-
+                    
+                    # Ищем совпадения по полному content
                     matched = []
                     for k in all_knowledge:
                         topic_lower = k.get("topic", "").lower()
@@ -760,38 +737,34 @@ async def handle_text(message: Message):
                         score = 0
                         for qw in query_words:
                             if qw in topic_lower:
-                                score += 5
+                                score += 5  # topic — важнее
                             if qw in content_lower:
                                 score += 2
-                        if score >= 5:
+                        if score > 0:
                             matched.append((score, k))
-
+                    
+                    # Берём топ-5 совпадений для полноты
                     matched.sort(key=lambda x: -x[0])
                     if matched:
-                        extra += "
-
-[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:
-"
+                        extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                         for i, (score, k) in enumerate(matched[:5], 1):
                             topic = k.get("topic", "")
                             content = k.get("content", "")[:3000]
-                            extra += f"
---- Тема {i}: {topic} ---
-{content}
-"
-                        extra += "
-ВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.
-"
+                            extra += f"\n--- Тема {i}: {topic} ---\n{content}\n"
+                        extra += "\nВАЖНО: дай ПОЛНЫЙ подробный ответ с контактами, ФИО, телефонами, email. НЕ сокращай.\n"
         except Exception as e:
             logger.warning(f"Ошибка поиска в knowledge_base: {e}")
-
+        
+        # Ограничиваем общий размер промпта
         if len(extra) > 12000:
-            extra = extra[:12000] + "
-...[контекст обрезан]"
+            extra = extra[:12000] + "\n...[контекст обрезан]"
         logger.info(f"[KB DEBUG s3] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
+        # AI-ассистент — без истории (чтобы не склеивались запросы)
         msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
         answer = await ask_deepseek(msgs)
         logger.info(f"[KB DEBUG s3] DeepSeek answer: {answer[:500]}")
+        
+        # Лёгкая очистка
         answer = strip_ai_assistant_junk(answer)
 
     # --- РАСЧЁТНЫЙ ЗАПРОС: чистый fallback ---
@@ -819,31 +792,26 @@ async def handle_text(message: Message):
         if found_codes:
             info = found_codes[0]
             pt = info["parsed_tariff"]
-            header = f"📋 <code>{info['code']}</code>
-"
+            header = f"📋 <code>{info['code']}</code>\n"
             name_clean = re.sub(r"\s*\(за исключением[^)]+", "", info["name"]).strip()
             name_clean = name_clean.replace("🠺", "→").replace("🠔", "←")
             full_name = TNVED_FULL_NAMES.get(info["code"][:6], name_clean)
-            header += f"🔧 {full_name}
-"
+            header += f"🔧 {full_name}\n"
             header += f"💰 <b>Пошлина:</b> {info['tariff']}"
             if pt.get("type") in ("min", "plus", "fixed_eur"):
                 header += f" — комбинированная ({pt['formula']})"
             elif pt.get("type") == "percent":
                 header += " — адвалорная"
-            header += "
-"
+            header += "\n"
             vat_str = "10% (льготная)" if vat_rate == 0.10 else "22% (базовая)"
-            header += f"🧾 <b>НДС:</b> {vat_str}
-"
+            header += f"🧾 <b>НДС:</b> {vat_str}\n"
             if radio_detected:
                 _, fee_display = convert_fee_to_currency(RADIO_FEE, base_cur or "RUB", rates or {})
-                header += f"⚡ <b>Радиоэлектроника:</b> сбор {fee_display}
-"
+                header += f"⚡ <b>Радиоэлектроника:</b> сбор {fee_display}\n"
             if missing:
-                header += f"⚠️ Не найдены: {', '.join(missing)}
-"
+                header += f"⚠️ Не найдены: {', '.join(missing)}\n"
 
+        # Fallback если DeepSeek не вывёл платежи
         has_deepseek_calc = any(
             k in answer.lower()
             for k in (
@@ -852,7 +820,7 @@ async def handle_text(message: Message):
                 "таможенная стоимость:", "таможенных платежей",
             )
         )
-        if is_calc and found_codes and base_cur and not has_deepseek_calc:
+        if is_calc and base_cur and not has_deepseek_calc:
             code_val = found_codes[0]["code"] if found_codes else None
             name_val = (
                 TNVED_FULL_NAMES.get(found_codes[0]["code"][:6], found_codes[0]["name"])
@@ -872,33 +840,30 @@ async def handle_text(message: Message):
                 weight_kg=comps.get("weight_kg"),
             )
             if fallback:
-                answer += "
-
-" + fallback
+                answer += "\n\n" + fallback
 
         if header:
-            answer = header + "
-" + answer
+            answer = header + "\n" + answer
 
     # --- Декларант (только для НЕ-расчётных ответов) ---
     if found_codes and not is_calc and "декларант" not in answer.lower():
-        answer += "
-
-📌 <i>Точную информацию уточняйте у декларанта.</i>"
+        answer += "\n\n📌 <i>Точную информацию уточняйте у декларанта.</i>"
 
     # --- Курс ЦБ РФ ---
+    # Добавляем курс ТОЛЬКО если его ещё нет в ответе
     if "💱" not in answer and "курс цб" not in answer.lower():
-        if rates:
+        try:
+            rates = await get_cbr_rates()
             cny = rates.get("CNY", "н/д")
             usd = rates.get("USD", "н/д")
             eur = rates.get("EUR", "н/д")
             date = rates.get("DATE", "сегодня")
             answer += (
-                f"
-
-💱 <i>Курс ЦБ РФ на {date}: "
+                f"\n\n💱 <i>Курс ЦБ РФ на {date}: "
                 f"1 USD = {usd} ₽, 1 CNY = {cny} ₽, 1 EUR = {eur} ₽</i>"
             )
+        except Exception:
+            pass
 
     save_message(user_id, message.from_user.username or "", "assistant", answer)
     await safe_send(message, answer)
