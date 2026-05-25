@@ -441,17 +441,33 @@ async def handle_text(message: Message):
             _prev = get_dialog_history(user_id, limit=4)
             _earlier = _prev[:-1] if _prev else []
             _prev_bot = next((m["content"] for m in reversed(_earlier) if m["role"] == "assistant"), "")
-            recently_picking = any(
+            _prev_user = next((m["content"] for m in reversed(_earlier) if m["role"] == "user"), "")
+            _prev_combined = (_prev_bot + " " + _prev_user).lower()
+
+            bot_was_picking = any(
                 marker in _prev_bot.lower()
                 for marker in ("тн вэд", "уточняющие вопрос", "уточните", "наиболее вероятн", "подбор", "группа")
             )
-            # Но если в текущем сообщении явно новый товар/расчёт — это НЕ продолжение
+
+            # Материал в текущем сообщении
+            _kw_in_msg = [w for w in re.findall(r'[а-яёa-z]{4,}', text_lower) if w not in STOP_WORDS]
+            _materials_now = [
+                w for w in _kw_in_msg
+                if (w in MATERIAL_MAP) or (lemmatize_russian(w) in MATERIAL_MAP)
+            ]
+            # Новый материал = тот, которого НЕ было в предыдущем диалоге.
+            # «хлопок» после «хлопковые футболки» — не новый. «алюминий» — новый.
+            _has_new_material = any(
+                m[:4] not in _prev_combined for m in _materials_now
+            ) if _materials_now else False
+
             has_new_intent = bool(
                 re.search(r"(?<!\d)\d{4,}(?!\d)", user_text)
-                or any(w in text_lower for w in ("посчитай", "подбери", "инвойс", "фрахт", "сколько"))
+                or any(w in text_lower for w in ("посчитай", "подбери", "инвойс", "фрахт", "сколько", "рассчитай"))
+                or _has_new_material
             )
-            if has_new_intent:
-                recently_picking = False
+            # Продолжение темы, только если бот недавно подбирал И нет признаков нового запроса
+            recently_picking = bool(bot_was_picking and not has_new_intent)
         except Exception as e:
             logger.warning(f"Не удалось проверить контекст диалога: {e}")
 
@@ -592,12 +608,12 @@ async def handle_text(message: Message):
                 extra = extra[:12000] + "\n...[контекст обрезан]"
             logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, recently_picking={recently_picking}")
 
-            # Подбор кода — С ИСТОРИЕЙ диалога: LLM сама понимает, новый это запрос
-            # или продолжение темы. Инструкция про контекст уже в build_messages.
+            # Историю подаём ТОЛЬКО если это продолжение темы (recently_picking).
+            # Для нового товара/расчёта — без истории, чтобы не смешивать с прошлым.
             msgs = build_messages(
                 user_id, user_text,
                 extra_context=extra,
-                include_history=True,
+                include_history=recently_picking,
                 history_limit=6,
             )
             answer = await ask_deepseek(msgs)
