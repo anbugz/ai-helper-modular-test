@@ -258,19 +258,29 @@ def format_calculation_fallback(
         lines.append("📊 <b>Итоговый расчёт</b>")
         lines.append(f"💰 Таможенная стоимость:  {ts_fallback:>12,.2f} {currency}")
         duty_pct_display = int(ad_val_pct * 100) if ad_val_pct else 0
-        lines.append(f"💰 Пошлина ({duty_method}):")
-        if tariff_type in ("min", "plus") and eur_per_kg and weight_kg:
+
+        if tariff_type == "min" and eur_per_kg and weight_kg:
+            adval_wins = duty_adval >= duty_eur_component
+            if adval_wins:
+                lines.append(f"💰 Пошлина (адвалорная {duty_pct_display}%, выбрана как бо́льшая):")
+                lines.append(f"   • {duty_pct_display}% × {ts_fallback:,.2f} = {duty_val:>10,.2f} {currency}")
+            else:
+                lines.append(f"💰 Пошлина (евро/кг, выбрана как бо́льшая):")
+                lines.append(f"   • {eur_in_cur_str}")
+
+        elif tariff_type == "plus" and eur_per_kg and weight_kg:
+            lines.append(f"💰 Пошлина (адвалорная + евро/кг):")
             lines.append(f"   • адвалорная {duty_pct_display}%: {duty_adval:>10,.2f} {currency}")
             lines.append(f"   • евро/кг:  {eur_in_cur_str}")
-            if tariff_type == "min":
-                lines.append(f"   • итого (MAX): {duty_val:>10,.2f} {currency}")
-            else:
-                lines.append(f"   • итого (+): {duty_val:>12,.2f} {currency}")
+
         elif tariff_type == "fixed_eur" and eur_per_kg and weight_kg:
+            lines.append(f"💰 Пошлина (евро/кг):")
             lines.append(f"   • {eur_in_cur_str}")
-            lines.append(f"   • итого: {duty_val:>16,.2f} {currency}")
+
         else:
+            lines.append(f"💰 Пошлина ({duty_method}):")
             lines.append(f"{'':>26} {duty_val:>12,.2f} {currency}")
+
         lines.append(f"🧾 НДС {vat_pct}%:{'':>17} {vat_val:>12,.2f} {currency}")
         
         if fee_in_cur > 0:
