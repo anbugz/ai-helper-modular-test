@@ -538,7 +538,23 @@ async def handle_text(message: Message):
             # === ПОИСК ПО БАЗЕ ЗНАНИЙ — TF-IDF ===
             try:
                 from services.search import tfidf_search
-                kb_results = tfidf_search(user_text, top_n=2, min_score=0.05)
+                kb_results = tfidf_search(user_text, top_n=4, min_score=0.05)
+                # Если найденные секции из одного документа — добираем ещё секции из него же
+                if kb_results:
+                    from database import get_all_knowledge_with_ids
+                    source_docs = set(
+                        k.get("source_doc") for k in kb_results if k.get("source_doc")
+                    )
+                    if len(source_docs) == 1:
+                        # Один документ — берём все его секции (до 8)
+                        all_kb = get_all_knowledge_with_ids()
+                        src = list(source_docs)[0]
+                        same_doc = [k for k in all_kb if k.get("source_doc") == src]
+                        if len(same_doc) > len(kb_results):
+                            # Добавляем секции которых ещё нет в результатах
+                            found_ids = {k["id"] for k in kb_results}
+                            extra = [k for k in same_doc if k["id"] not in found_ids]
+                            kb_results = kb_results + extra[:max(0, 8 - len(kb_results))]
                 if kb_results:
                     context_parts.append("\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:")
                     for k in kb_results:
@@ -732,7 +748,21 @@ async def handle_text(message: Message):
         # === ПОИСК ПО БАЗЕ ЗНАНИЙ — TF-IDF ===
         try:
             from services.search import tfidf_search
-            kb_results = tfidf_search(user_text, top_n=2, min_score=0.05)
+            kb_results = tfidf_search(user_text, top_n=4, min_score=0.05)
+            # Если найденные секции из одного документа — добираем ещё секции из него же
+            if kb_results:
+                from database import get_all_knowledge_with_ids
+                source_docs = set(
+                    k.get("source_doc") for k in kb_results if k.get("source_doc")
+                )
+                if len(source_docs) == 1:
+                    all_kb = get_all_knowledge_with_ids()
+                    src = list(source_docs)[0]
+                    same_doc = [k for k in all_kb if k.get("source_doc") == src]
+                    if len(same_doc) > len(kb_results):
+                        found_ids = {k["id"] for k in kb_results}
+                        extra = [k for k in same_doc if k["id"] not in found_ids]
+                        kb_results = kb_results + extra[:max(0, 8 - len(kb_results))]
             if kb_results:
                 extra += "\n\n[КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ]:\n"
                 for k in kb_results:
