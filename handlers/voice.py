@@ -1,10 +1,8 @@
 """
 handlers/voice.py — обработка голосовых сообщений.
-Перенос из handlers_legacy.py: handle_voice.
-Схема: скачивание → STT (Deepgram) → обработка как текст.
+Схема: скачивание → STT (Deepgram async) → обработка как текст.
 """
 import os
-import asyncio
 from aiogram import Router, F
 from aiogram.types import Message
 
@@ -20,7 +18,6 @@ router = Router()
 async def handle_voice(message: Message):
     """Голосовое сообщение → распознавание → обработка как текст."""
     user_id = message.from_user.id
-    username = message.from_user.username or ""
 
     if not check_rate_limit(user_id):
         return
@@ -35,11 +32,10 @@ async def handle_voice(message: Message):
         await message.answer("❌ Не удалось скачать голосовое сообщение")
         return
 
-    # Сообщаем что обрабатываем
     processing_msg = await message.answer("🎤 Распознаю голосовое...")
 
-    # Распознаём (Deepgram API — в отдельном потоке, чтобы не блокировать бота)
-    recognized_text = await asyncio.to_thread(speech_to_text, ogg_path)
+    # Распознаём через async Deepgram (не блокирует event loop)
+    recognized_text = await speech_to_text(ogg_path)
 
     # Удаляем временный файл
     try:
@@ -48,22 +44,23 @@ async def handle_voice(message: Message):
         pass
 
     if not recognized_text:
-        await processing_msg.edit_text("❌ Не удалось распознать голосовое сообщение. Попробуйте текстом.")
+        await processing_msg.edit_text(
+            "❌ Не удалось распознать голосовое сообщение. Попробуйте текстом."
+        )
         return
 
-    # Показываем что распознали
-    await processing_msg.edit_text(f"🎤 <i>Распознано:</i> <b>{recognized_text[:200]}</b>")
+    await processing_msg.edit_text(
+        f"🎤 <i>Распознано:</i> <b>{recognized_text[:200]}</b>"
+    )
 
-    # Создаём копию сообщения — убираем voice, добавляем text
     fake_message = message.model_copy(update={"text": recognized_text})
+    logger.info(
+        f"VOICE DEBUG: fake_message.text={fake_message.text!r}, "
+        f"content_type={fake_message.content_type}"
+    )
 
-    # Диагностика: проверяем что text действительно установлен
-    logger.info(f"VOICE DEBUG: fake_message.text={fake_message.text!r}, content_type={fake_message.content_type}")
-
-    # Сбрасываем rate limit — иначе handle_text заблокирует второе подряд голосовое
+    # Сбрасываем rate limit перед передачей в handle_text
     clear_rate_limit(user_id)
 
-    # Передаём в основной обработчик текста
-    # Импорт здесь, чтобы избежать циклического импорта
     from handlers.text import handle_text
     await handle_text(fake_message)
