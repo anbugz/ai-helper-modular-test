@@ -429,7 +429,32 @@ async def handle_text(message: Message):
     if not found_codes and not codes:
         # ДЕТЕКЦИЯ ВЭД-ИНТЕНТА
         has_ved_intent = any(kw in text_lower for kw in VED_INTENT_KEYWORDS)
-        
+
+        # --- Был ли недавно подбор кода? ---
+        # Если бот в прошлом ответе подбирал код / задавал уточнения, то текущее
+        # сообщение, скорее всего, продолжение темы. В этом случае НЕ подмешиваем
+        # коды материалов (чтобы «хлопок» не утянул в ткани) — пусть LLM сама решит
+        # по истории диалога, новый это запрос или уточнение.
+        recently_picking = False
+        try:
+            from database import get_dialog_history
+            _prev = get_dialog_history(user_id, limit=4)
+            _earlier = _prev[:-1] if _prev else []
+            _prev_bot = next((m["content"] for m in reversed(_earlier) if m["role"] == "assistant"), "")
+            recently_picking = any(
+                marker in _prev_bot.lower()
+                for marker in ("тн вэд", "уточняющие вопрос", "уточните", "наиболее вероятн", "подбор", "группа")
+            )
+            # Но если в текущем сообщении явно новый товар/расчёт — это НЕ продолжение
+            has_new_intent = bool(
+                re.search(r"(?<!\d)\d{4,}(?!\d)", user_text)
+                or any(w in text_lower for w in ("посчитай", "подбери", "инвойс", "фрахт", "сколько"))
+            )
+            if has_new_intent:
+                recently_picking = False
+        except Exception as e:
+            logger.warning(f"Не удалось проверить контекст диалога: {e}")
+
         if has_ved_intent:
             # === БЛОК ПОИСКА ПО МАТЕРИАЛАМ ===
             # Извлекаем ключевые слова (4+ букв)
@@ -437,7 +462,7 @@ async def handle_text(message: Message):
             keywords = [w for w in keywords if w not in STOP_WORDS]
             seen = set()
             keywords = [w for w in keywords if not (w in seen or seen.add(w))]
-        
+
             # --- Шаг 1: Поиск по маппингу материалов (с лемматизацией) ---
             matched_sections = set()
             lemmatized_hits = []
@@ -461,7 +486,7 @@ async def handle_text(message: Message):
                                 break
         
             all_results = []
-            if matched_sections:
+            if matched_sections and not recently_picking:
                 all_results = search_tnved_by_sections(list(matched_sections))
         
             # --- ВСЕГДА Используем DeepSeek с уточняющими вопросами ---
@@ -540,7 +565,9 @@ async def handle_text(message: Message):
                 "ВАЖНО: если в контексте есть контактные данные (телефон, email, адрес, Telegram) — выведи их ПОЛНОСТЬЮ, без сокращений.\n"
                 "Если в контексте нет ответа — помоги с подбором кода ТН ВЭД:\n"
                 "1. Начни с краткого анализа: какая ГРУППА ТН ВЭД (первые 4 цифры) наиболее вероятна.\n"
-                "2. Задай 2-4 УТОЧНЯЮЩИХ ВОПРОСА — без ответов на них невозможно точно определить код:\n"
+                "2. Если в диалоге выше ты УЖЕ задавал уточняющие вопросы и пользователь на них ответил — "
+                "НЕ повторяй вопросы заново, а уточни код на основе полученных ответов. "
+                "Если же это первое обращение — задай 2-4 УТОЧНЯЮЩИХ ВОПРОСА (без ответов на них точный код не определить):\n"
                 "   - Для тканей: плотность (г/м²), переплетение (саржа, полотняное), состав (%), отделка, ширина\n"
                 "   - Для электроники: назначение, технические характеристики\n"
                 "   - Для одежды: пол, возраст, материал, способ изготовления\n"
@@ -560,34 +587,19 @@ async def handle_text(message: Message):
         
             extra = "\n".join(context_parts)
 
-            # Подмешиваем последний обмен (предыдущий вопрос бота + ответ пользователя),
-            # чтобы при уточнении бот помнил о ЧЁМ шла речь (футболки, а не ткань).
-            try:
-                from database import get_dialog_history
-                prev = get_dialog_history(user_id, limit=4)
-                # Последнее сообщение в prev — текущий запрос пользователя (сохранён выше).
-                # Ищем предыдущую пару (вопрос бота + более ранний запрос) среди остальных.
-                earlier = prev[:-1] if prev else []
-                if earlier:
-                    prev_user = next((m["content"] for m in reversed(earlier) if m["role"] == "user"), "")
-                    prev_bot = next((m["content"] for m in reversed(earlier) if m["role"] == "assistant"), "")
-                    if prev_user or prev_bot:
-                        hist_ctx = "\n\n[ПРЕДЫДУЩИЙ КОНТЕКСТ ДИАЛОГА — учитывай его, это уточнение того же товара]:\n"
-                        if prev_user:
-                            hist_ctx += f"Ранее пользователь спросил: {prev_user[:300]}\n"
-                        if prev_bot:
-                            hist_ctx += f"Ты ответил (кратко): {prev_bot[:500]}\n"
-                        hist_ctx += "ВАЖНО: текущее сообщение — это ОТВЕТ на твои уточняющие вопросы, а не новый товар. Продолжай подбор того же изделия."
-                        extra = hist_ctx + "\n\n" + extra
-            except Exception as e:
-                logger.warning(f"Не удалось добавить контекст диалога: {e}")
-
             # Ограничиваем общий размер промпта
             if len(extra) > 12000:
                 extra = extra[:12000] + "\n...[контекст обрезан]"
-            logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, has_kb={'[КОНТЕКСТ' in extra}")
-            # Подбор кода — без полной истории, но с последним обменом (см. выше)
-            msgs = build_messages(user_id, user_text, extra_context=extra, include_history=False)
+            logger.info(f"[KB DEBUG s4] prompt len={len(extra)}, recently_picking={recently_picking}")
+
+            # Подбор кода — С ИСТОРИЕЙ диалога: LLM сама понимает, новый это запрос
+            # или продолжение темы. Инструкция про контекст уже в build_messages.
+            msgs = build_messages(
+                user_id, user_text,
+                extra_context=extra,
+                include_history=True,
+                history_limit=6,
+            )
             answer = await ask_deepseek(msgs)
             answer = strip_ai_assistant_junk(answer)
             logger.info(f"[KB DEBUG s4] DeepSeek answer: {answer[:500]}")
