@@ -25,6 +25,11 @@ except ImportError:
 @router.message(F.document)
 async def handle_document(message: Message):
     """Обработка загружаемых документов. Только для администратора."""
+    # Если пользователь в режиме создания договора — пропускаем
+    from handlers.contracts import CONTRACT_STATE
+    if message.from_user.id in CONTRACT_STATE:
+        return
+
     doc = message.document
     user_id = message.from_user.id
     file_name = (doc.file_name or "").lower()
