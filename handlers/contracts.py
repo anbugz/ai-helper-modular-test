@@ -172,8 +172,8 @@ async def get_contract_number(prefix: str, contract_key: str) -> str:
 # ─── Извлечение текста из файлов ─────────────────────────────────────────────
 def extract_text_docx(path: str) -> str:
     try:
-        from docx import Document
-        doc = Document(path)
+        from docx import Document as DocxDocument
+        doc = DocxDocument(path)
         lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
         for table in doc.tables:
             for row in table.rows:
