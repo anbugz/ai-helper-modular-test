@@ -25,10 +25,11 @@ async def main():
     restore_tnved_from_db()
     
     # Регистрация хэндлеров
-    from handlers import commands, admin, documents, voice, text
-    
+    from handlers import commands, admin, documents, voice, text, contracts
+
     dp.include_router(commands.router)
     dp.include_router(admin.router)
+    dp.include_router(contracts.router)   # ← договоры (до text!)
     dp.include_router(documents.router)
     dp.include_router(voice.router)
     dp.include_router(text.router)
