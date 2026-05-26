@@ -303,10 +303,17 @@ async def extract_company_data(raw_text: str) -> dict:
         data = json.loads(answer)
 
         # Пост-обработка управляющей организации
-        if data.get('has_managing_company') and data.get('managing_company_name_short'):
-            mc_short = data['managing_company_name_short']
+        if data.get('has_managing_company'):
+            mc_full = data.get('managing_company_name', '')
+            mc_short = data.get('managing_company_name_short', '')
+            # Фолбэк: если короткое название не извлечено — берём из полного
+            if not mc_short and mc_full:
+                m = re.search(r'(ООО|АО|ПАО|ЗАО)\s*[«"]?([^»"]+)[»"]?', mc_full)
+                if m:
+                    mc_short = f"{m.group(1)} «{m.group(2).strip()}»"
+                    data['managing_company_name_short'] = mc_short
             co_short = data.get('company_name_short', '')
-            if not data.get('ceo_position_nominative') or 'управляющ' not in data.get('ceo_position_nominative', '').lower():
+            if mc_short and co_short:
                 data['ceo_position_nominative'] = f"Генеральный директор {mc_short} — управляющей организации {co_short}"
                 data['ceo_position_genitive'] = f"Генерального директора {mc_short} — управляющей организации {co_short}"
             if 'Договора о передаче' not in data.get('legal_basis_full', ''):
