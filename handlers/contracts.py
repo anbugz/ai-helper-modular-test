@@ -454,18 +454,19 @@ async def handle_contract_file(message: Message):
     status = await message.answer("⏳ Обрабатываю файл...")
     tmp_path = None
     try:
+        from bot_instance import bot
         if message.document:
-            tg_file = message.document
-            file_obj = await tg_file.get_file()
-            ext = os.path.splitext(tg_file.file_name or 'file')[1].lower()
+            tg_doc = message.document
+            file_obj = await bot.get_file(tg_doc.file_id)
+            ext = os.path.splitext(tg_doc.file_name or 'file')[1].lower()
         else:
-            tg_file = message.photo[-1]
-            file_obj = await tg_file.get_file()
+            tg_photo = message.photo[-1]
+            file_obj = await bot.get_file(tg_photo.file_id)
             ext = '.jpg'
 
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-            await file_obj.download_to_drive(tmp.name)
             tmp_path = tmp.name
+            await bot.download_file(file_obj.file_path, destination=tmp_path)
 
         await status.edit_text("⏳ Извлекаю текст из файла...")
         raw_text = await asyncio.to_thread(extract_text_from_file, tmp_path)
