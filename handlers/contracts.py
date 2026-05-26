@@ -391,12 +391,18 @@ async def start_contract_flow(message: Message):
     )
 
 
-@router.message(F.text)
-async def handle_contract_step(message: Message):
+def _is_contract_button(text: str) -> bool:
+    """Проверяет является ли текст кнопкой выбора договора."""
+    return text in [c['button'] for c in CONTRACTS.values()] or text == "❌ Отмена"
+
+
+@router.message(F.text.func(lambda t: t in [c['button'] for c in CONTRACTS.values()] + ["❌ Отмена"]))
+async def handle_contract_button(message: Message):
+    """Обрабатывает только нажатия кнопок договоров."""
     user_id = message.from_user.id
     state = CONTRACT_STATE.get(user_id)
     if not state:
-        return  # Не в режиме договора — пропускаем
+        return
 
     text = message.text.strip()
 
@@ -432,14 +438,23 @@ async def handle_contract_step(message: Message):
             parse_mode="HTML",
             reply_markup=ReplyKeyboardRemove()
         )
+
+
+@router.message(F.text)
+async def handle_contract_text(message: Message):
+    """Обрабатывает текст карточки компании когда пользователь в режиме wait_card."""
+    user_id = message.from_user.id
+    state = CONTRACT_STATE.get(user_id)
+
+    # Только если в режиме ожидания карточки
+    if not state or state.get('step') != 'wait_card':
         return
 
-    # Шаг 2: получили текст как карточку
-    if state['step'] == 'wait_card':
-        if len(text) < 30:
-            await message.answer("Текст слишком короткий. Пришли карточку компании.")
-            return
-        await _process_card_text(message, text)
+    text = message.text.strip()
+    if len(text) < 30:
+        await message.answer("Текст слишком короткий. Пришли карточку компании.")
+        return
+    await _process_card_text(message, text)
 
 
 @router.message(F.document | F.photo)
