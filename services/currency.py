@@ -1,45 +1,76 @@
 """
-services/currency.py — курсы ЦБ РФ, конвертация, форматирование.
-Перенос из utils.py (get_cbr_rates, format_cross_rates, convert_fee_to_currency).
+services/currency.py — курсы валют через MOEX (Московская биржа).
+ЦБ РФ недоступен с VDS — используем MOEX API который отдаёт официальные курсы ЦБ.
 """
 import asyncio
-import re
+import json
 import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Dict
 from config import logger
 
 
-CBR_URL = "https://www.cbr.ru/scripts/XML_daily.asp"
+MOEX_URL = "https://iss.moex.com/iss/statistics/engines/currency/markets/selt/rates.json"
+
+_rates_cache: Dict[str, str] = {}
+_cache_ts: float = 0.0
+_CACHE_TTL = 60.0
 
 
 async def get_cbr_rates() -> Dict[str, str]:
-    """Получает курсы ЦБ РФ (CNY, USD, EUR) и дату.
-    
-    Returns:
-        {"CNY": "12.3456", "USD": "90.1234", "EUR": "98.7654", "DATE": "21.05.2026"}
+    """Получает курсы валют (CNY, USD, EUR) через MOEX API.
+    Возвращает официальные курсы ЦБ РФ. Кеширует на 60 секунд.
     """
+    global _rates_cache, _cache_ts
+    import time
+    now = time.monotonic()
+    if _rates_cache and (now - _cache_ts) < _CACHE_TTL:
+        return _rates_cache
+
     rates = {"CNY": "н/д", "USD": "н/д", "EUR": "н/д", "DATE": ""}
     try:
         def _fetch():
-            with urllib.request.urlopen(CBR_URL, timeout=15) as resp:
-                return resp.read().decode("windows-1251")
-        xml_text = await asyncio.to_thread(_fetch)
-        root = ET.fromstring(xml_text)
-        date_attr = root.get("Date", "")
-        rates["DATE"] = date_attr
-        for valute in root.findall("Valute"):
-            char_code = valute.findtext("CharCode", "")
-            value = valute.findtext("Value", "").replace(",", ".")
-            nominal = int(valute.findtext("Nominal", "1"))
-            if char_code in ("CNY", "USD", "EUR"):
+            with urllib.request.urlopen(MOEX_URL, timeout=10) as resp:
+                return resp.read().decode("utf-8")
+        text = await asyncio.to_thread(_fetch)
+        data = json.loads(text)
+
+        # USD и EUR из курсов ЦБ
+        cbrf = data.get("cbrf", {})
+        columns = cbrf.get("columns", [])
+        rows = cbrf.get("data", [])
+        if rows:
+            d = dict(zip(columns, rows[0]))
+            if d.get("CBRF_USD_LAST"):
+                rates["USD"] = str(round(float(d["CBRF_USD_LAST"]), 4))
+            if d.get("CBRF_EUR_LAST"):
+                rates["EUR"] = str(round(float(d["CBRF_EUR_LAST"]), 4))
+            date_str = d.get("CBRF_USD_TRADEDATE", d.get("TODAY_DATE", ""))
+            if date_str:
                 try:
-                    rates[char_code] = str(round(float(value) / nominal, 4))
+                    rates["DATE"] = datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
                 except ValueError:
-                    pass
+                    rates["DATE"] = date_str[:10]
+
+        # CNY из биржевых торгов (CNYRUB_TOM)
+        wap = data.get("wap_rates", {})
+        wap_cols = wap.get("columns", [])
+        for wrow in wap.get("data", []):
+            wd = dict(zip(wap_cols, wrow))
+            if wd.get("secid") == "CNYRUB_TOM" and wd.get("price"):
+                rates["CNY"] = str(round(float(wd["price"]), 4))
+                break
+
+        logger.info(f"Курсы MOEX: USD={rates['USD']}, EUR={rates['EUR']}, CNY={rates['CNY']}, DATE={rates['DATE']}")
+        _rates_cache = rates
+        _cache_ts = now
+
     except Exception as e:
-        logger.error(f"Ошибка получения курсов ЦБ: {e}")
+        logger.error(f"Ошибка получения курсов MOEX: {e}")
+        if _rates_cache:
+            logger.info("Возвращаем кешированные курсы")
+            return _rates_cache
+
     return rates
 
 
