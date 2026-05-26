@@ -271,9 +271,7 @@ async def extract_company_data(raw_text: str) -> dict:
             messages=[
                 {"role": "system", "content": "Возвращай только валидный JSON. Сохраняй кавычки в названиях компаний."},
                 {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=2000,
+            ]
         )
         # Очищаем от markdown
         answer = re.sub(r'^```json\s*', '', answer.strip())
