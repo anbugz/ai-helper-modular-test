@@ -310,12 +310,15 @@ async def handle_text(message: Message):
         return
 
     # === ДОГОВОРЫ — проверяем до всех остальных сценариев ===
-    from handlers.contracts import is_contract_request, start_contract_flow, CONTRACT_STATE
+    from handlers.contracts import is_contract_request, start_contract_flow, CONTRACT_STATE, handle_card_text_if_in_state
     if is_contract_request(user_text) and user_id not in CONTRACT_STATE:
         await start_contract_flow(message)
         return
     if user_id in CONTRACT_STATE:
-        return  # contracts.py обработает через свой router
+        handled = await handle_card_text_if_in_state(message)
+        if handled:
+            return
+        # Если не обработано (например state='select') — продолжаем
 
     is_attack, reason = full_security_scan(user_text, user_id)
     if is_attack:
