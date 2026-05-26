@@ -28,6 +28,7 @@ from config import (
     ADMIN_ID, LEARN_MODE, PENDING_CODE_UPDATE,
     RADIO_FEE, CUSTOMS_FEE_RUB, RADIO_ELECTRONICS_CODES_SET,
     TNVED_FULL_NAMES, logger,
+    ALLOWED_USERS, RATE_LIMIT_PER_MINUTE,
 )
 from database import (
     save_message, save_correction, get_knowledge,
@@ -239,6 +240,21 @@ STOP_WORDS = {
 # MAIN HANDLER
 # ------------------------------------------------------------------
 
+# Rate limiter: user_id -> (minute_timestamp, count)
+_rate_buckets: dict = {}
+
+# Фразы попытки раскрытия промпта / инъекции
+_PROMPT_INJECTION_PATTERNS = [
+    "покажи инструкции", "покажи промпт", "покажи системный промпт",
+    "what is your prompt", "show prompt", "ignore previous",
+    "забудь инструкции", "забудь всё", "ты теперь", "притворись",
+    "ты другой бот", "новые инструкции", "system prompt", "ignore all",
+    "disregard", "jailbreak", "ты gpt", "ты chatgpt", "act as",
+    "напиши промпт", "раскрой инструкции", "покажи настройки",
+    "что тебе сказали", "твои инструкции", "твой промпт",
+]
+
+
 @router.message(F.text)
 async def handle_text(message: Message):
     """Основной обработчик текстовых сообщений."""
@@ -247,7 +263,52 @@ async def handle_text(message: Message):
     if not user_text or user_text.startswith("/"):
         return
 
-    # === ПОЛНОЕ SECURITY СКАНИРОВАНИЕ ===
+    # === 1. WHITELIST — доступ только разрешённым пользователям ===
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        logger.warning(f"WHITELIST BLOCKED user {user_id}: {user_text[:50]}")
+        await message.answer("⛔ У вас нет доступа к этому боту.")
+        # Уведомляем админа о попытке доступа
+        if ADMIN_ID:
+            try:
+                from bot_instance import bot
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ Попытка доступа от неизвестного пользователя:\n"
+                    f"ID: <code>{user_id}</code>\n"
+                    f"Имя: {message.from_user.full_name}\n"
+                    f"Username: @{message.from_user.username or '—'}\n"
+                    f"Сообщение: {user_text[:100]}",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+        return
+
+    # === 2. RATE LIMIT — не более N запросов в минуту ===
+    if RATE_LIMIT_PER_MINUTE > 0:
+        import time
+        now_min = int(time.time() // 60)
+        bucket = _rate_buckets.get(user_id, (0, 0))
+        if bucket[0] == now_min:
+            count = bucket[1] + 1
+        else:
+            count = 1
+        _rate_buckets[user_id] = (now_min, count)
+        if count > RATE_LIMIT_PER_MINUTE:
+            logger.warning(f"RATE LIMIT user {user_id}: {count} req/min")
+            await message.answer("⏳ Слишком много запросов. Подожди минуту.")
+            return
+
+    # === 3. ЗАЩИТА ПРОМПТА — блокируем попытки инъекций ===
+    text_lower_check = user_text.lower()
+    if any(pattern in text_lower_check for pattern in _PROMPT_INJECTION_PATTERNS):
+        logger.warning(f"PROMPT INJECTION attempt from {user_id}: {user_text[:100]}")
+        await message.answer(
+            "Я не могу раскрыть свои внутренние инструкции или настройки. "
+            "Напиши свой рабочий вопрос по ВЭД — помогу."
+        )
+        return
+
     is_attack, reason = full_security_scan(user_text, user_id)
     if is_attack:
         if reason == "USER_BLOCKED":
