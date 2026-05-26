@@ -449,16 +449,18 @@ async def handle_contract_file(message: Message):
     user_id = message.from_user.id
     state = CONTRACT_STATE.get(user_id)
     if not state or state.get('step') != 'wait_card':
-        return
+        return  # Не в режиме договора — пропускаем совсем
 
     status = await message.answer("⏳ Обрабатываю файл...")
     tmp_path = None
     try:
         if message.document:
-            file_obj = await message.document.get_file()
-            ext = os.path.splitext(message.document.file_name or 'file')[1].lower()
+            tg_file = message.document
+            file_obj = await tg_file.get_file()
+            ext = os.path.splitext(tg_file.file_name or 'file')[1].lower()
         else:
-            file_obj = await message.photo[-1].get_file()
+            tg_file = message.photo[-1]
+            file_obj = await tg_file.get_file()
             ext = '.jpg'
 
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
