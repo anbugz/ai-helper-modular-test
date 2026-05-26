@@ -309,6 +309,14 @@ async def handle_text(message: Message):
         )
         return
 
+    # === ДОГОВОРЫ — проверяем до всех остальных сценариев ===
+    from handlers.contracts import is_contract_request, start_contract_flow, CONTRACT_STATE
+    if is_contract_request(user_text) and user_id not in CONTRACT_STATE:
+        await start_contract_flow(message)
+        return
+    if user_id in CONTRACT_STATE:
+        return  # contracts.py обработает через свой router
+
     is_attack, reason = full_security_scan(user_text, user_id)
     if is_attack:
         if reason == "USER_BLOCKED":
