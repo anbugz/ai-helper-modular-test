@@ -132,9 +132,11 @@ def get_acting_form(ceo_name: str) -> str:
 def add_quotes(name: str) -> str:
     if not name or name == '___________':
         return name
+    # Если кавычки уже есть — не трогаем
+    if '«' in name or '»' in name:
+        return name
     if re.match(r'^ИП\b', name, re.IGNORECASE):
-        return re.sub(r'[«»"]', '', name).strip()
-    name = re.sub(r'[«»"]', '', name)
+        return name.strip()
     for pattern, repl in [
         (r'(ООО|АО|ПАО|ЗАО)\s+(.+)$', r'\1 «\2»'),
         (r'(Общество с ограниченной ответственностью)\s+(.+)$', r'\1 «\2»'),
