@@ -768,18 +768,14 @@ async def handle_text(message: Message):
             from services.search import tfidf_search
             kb_results = tfidf_search(user_text, top_n=4, min_score=0.05)
 
-            # Умная фильтрация: если спрашивают про декларанта — убираем записи про агентов/экспедиторов
+            # Фильтрация: разделяем декларантов и агентов чтобы не путать
             _q = text_lower
             if any(w in _q for w in ("декларант", "декларанта", "декларанты")):
+                # Запрос про декларанта — убираем только записи про агентов-экспедиторов
+                # (те у которых тема начинается с "агенты")
                 kb_results = [
                     k for k in kb_results
-                    if not any(w in k.get("topic", "").lower() for w in ("агент", "экспедитор", "авиа", "авто", "море", "жд"))
-                ]
-            # И наоборот: если спрашивают про агентов/экспедиторов — убираем записи про декларантов
-            elif any(w in _q for w in ("агент", "экспедитор", "перевозчик")):
-                kb_results = [
-                    k for k in kb_results
-                    if "декларант" not in k.get("topic", "").lower()
+                    if not k.get("topic", "").lower().startswith("агенты ")
                 ]
 
             # Если найденные секции из одного документа — добираем ещё секции из него же
