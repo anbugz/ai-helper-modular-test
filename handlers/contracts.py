@@ -517,17 +517,17 @@ async def _process_card_text(message: Message, raw_text: str):
         inn = company_data.get('inn', '')
         filename = f"{contract_key}_{inn or short_name}.docx"
 
-        with open(filled_path, 'rb') as f:
-            await message.answer_document(
-                document=f,  # type: ignore
-                filename=filename,
-                caption=(
-                    f"✅ <b>{CONTRACTS[contract_key]['name']}</b> готов!\n"
-                    f"📋 Номер: <code>{contract_number}</code>\n"
-                    f"🏢 {company_data.get('company_name_short', '')}"
-                ),
-                parse_mode="HTML"
-            )
+        from aiogram.types import FSInputFile
+        doc_file = FSInputFile(filled_path, filename=filename)
+        await message.answer_document(
+            document=doc_file,
+            caption=(
+                f"✅ <b>{CONTRACTS[contract_key]['name']}</b> готов!\n"
+                f"📋 Номер: <code>{contract_number}</code>\n"
+                f"🏢 {company_data.get('company_name_short', '')}"
+            ),
+            parse_mode="HTML"
+        )
         os.unlink(filled_path)
         await status.delete()
 
