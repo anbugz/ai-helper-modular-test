@@ -315,6 +315,9 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
     tasks = resp.get("_embedded", {}).get("tasks", [])
     users = await get_users()
 
+    # Загружаем воронки заранее
+    pipelines = await get_pipelines()
+
     # Собираем ID сделок чтобы получить названия
     lead_ids = [t.get("entity_id") for t in tasks if t.get("entity_type") == "leads" and t.get("entity_id")]
     lead_names = {}
@@ -340,9 +343,9 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
         status_id = lead_data.get("status_id") if isinstance(lead_data, dict) else None
         pipeline_name = ""
         status_name = ""
-        if pipeline_id and pipeline_id in _pipelines_cache:
-            pipeline_name = _pipelines_cache[pipeline_id].get("name", "")
-            status_name = _pipelines_cache[pipeline_id].get("statuses", {}).get(status_id, "")
+        if pipeline_id and pipeline_id in pipelines:
+            pipeline_name = pipelines[pipeline_id].get("name", "")
+            status_name = pipelines[pipeline_id].get("statuses", {}).get(status_id, "")
         result.append({
             "id": t["id"],
             "text": t.get("text", "—"),
