@@ -319,11 +319,11 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
     lead_ids = [t.get("entity_id") for t in tasks if t.get("entity_type") == "leads" and t.get("entity_id")]
     lead_names = {}
     if lead_ids:
-        # Получаем названия сделок пачкой
-        ids_str = ",".join(str(i) for i in lead_ids[:20])
-        leads_resp = await _async_request("GET", "/leads", params={"filter[id][]": lead_ids[:20], "limit": 20})
-        for lead in leads_resp.get("_embedded", {}).get("leads", []):
-            lead_names[lead["id"]] = lead.get("name", "—")
+        # Получаем каждую сделку отдельным запросом (до 5 штук)
+        for lid in lead_ids[:5]:
+            lead_resp = await _async_request("GET", f"/leads/{lid}")
+            if lead_resp.get("id"):
+                lead_names[lead_resp["id"]] = lead_resp.get("name", "—")
 
     result = []
     for t in tasks:
