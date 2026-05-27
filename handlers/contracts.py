@@ -136,6 +136,11 @@ def get_gender(name: str) -> str:
     return 'm'
 
 
+def get_acting_form(ceo_name: str) -> str:
+    """Возвращает 'действующего' или 'действующей' по имени."""
+    return 'действующей' if get_gender(ceo_name) == 'f' else 'действующего'
+
+
 def add_quotes(name: str) -> str:
     if not name or name == '___________':
         return name
