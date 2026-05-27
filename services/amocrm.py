@@ -197,36 +197,38 @@ async def search_leads(query: str, limit: int = 5, include_closed: bool = False)
 
 
 async def search_leads_by_number(deal_number: str) -> list:
-    """Ищет сделки по номеру (64К, 73М и т.д.) — только активные,
-    только те у которых название начинается с номера."""
+    """Ищет активные сделки по номеру (64К, 73М и т.д.).
+    Ищет по цифровой части, потом фильтрует по полному номеру."""
+    import re
+    digits_match = re.match(r"^(\d+)", deal_number)
+    search_query = digits_match.group(1) if digits_match else deal_number
+
     resp = await _async_request("GET", "/leads", params={
-        "query": deal_number,
-        "limit": 20,
+        "query": search_query,
+        "limit": 50,
         "with": "contacts,custom_fields",
     })
     leads = resp.get("_embedded", {}).get("leads", [])
     pipelines = await get_pipelines()
     users = await get_users()
 
-    import re
+    pattern = re.compile(
+        r"^" + re.escape(deal_number) + r"[\s\-_\./]",
+        re.IGNORECASE
+    )
     result = []
     for lead in leads:
         name = lead.get("name", "")
-        # Название должно НАЧИНАТЬСЯ с номера сделки
-        if not re.match(rf'^{re.escape(deal_number)}[\\s\\-_]', name, re.IGNORECASE):
+        if not pattern.match(name):
             continue
-
         pipeline_id = lead.get("pipeline_id", 0)
         status_id = lead.get("status_id", 0)
         pipeline = pipelines.get(pipeline_id, {})
         status_name = pipeline.get("statuses", {}).get(status_id, "—")
-
-        # Пропускаем закрытые
         if status_id in CLOSED_STATUS_IDS:
             continue
         if any(w in status_name.lower() for w in CLOSED_STATUS_WORDS):
             continue
-
         responsible = users.get(lead.get("responsible_user_id", 0), "—")
         contacts = [c.get("name", "") for c in lead.get("_embedded", {}).get("contacts", [])]
         result.append({
@@ -239,32 +241,7 @@ async def search_leads_by_number(deal_number: str) -> list:
             "contacts": contacts,
             "updated_at": lead.get("updated_at", 0),
         })
-
     return result
-
-
-def format_lead(lead: dict) -> str:
-    """Форматирует сделку для отображения в Telegram."""
-    contacts_str = ", ".join(lead["contacts"]) if lead["contacts"] else "—"
-    price_str = f"{lead['price']:,} ₽".replace(",", " ") if lead["price"] else "—"
-
-    updated = ""
-    if lead.get("updated_at"):
-        dt = datetime.fromtimestamp(lead["updated_at"])
-        updated = dt.strftime("%d.%m.%Y")
-
-    return (
-        f"📋 <b>{lead['name']}</b>\n"
-        f"🆔 ID: <code>{lead['id']}</code>\n"
-        f"📊 Этап: {lead['pipeline']} → <b>{lead['status']}</b>\n"
-        f"👤 Ответственный: {lead['responsible']}\n"
-        f"💰 Бюджет: {price_str}\n"
-        f"👥 Контакты: {contacts_str}\n"
-        f"🕐 Обновлена: {updated}"
-    )
-
-
-# ─── Поиск контактов/компаний ────────────────────────────────────────────────
 
 async def search_contacts(query: str, limit: int = 3) -> list:
     """Ищет контакты и компании по названию/ИНН."""
