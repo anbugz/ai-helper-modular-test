@@ -17,6 +17,7 @@ from aiogram.types import Message
 from config import logger, ADMIN_ID
 from services.amo_leads import parse_deal_number, is_deal_number_request, format_lead_card
 from services.amocrm import (
+    search_leads_by_number,
     search_leads, format_lead,
     search_contacts, search_companies,
     create_task, add_note,
@@ -33,6 +34,7 @@ LEAD_TRIGGERS = [
     "сделка ", "по сделке", "статус сделки",
     "найди поделку", "что у нас с поделкой", "что по сделке",
     "поделка ", "по поделке", "что со сделкой", "что с поделкой",
+    "найди закрытую", "найди реализованную",
 ]
 CONTACT_TRIGGERS = [
     "найди контакт", "покажи контакт", "реквизиты ", "данные клиента",
@@ -57,10 +59,49 @@ def is_amo_request(text: str) -> bool:
 
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
 
+async def handle_deal_number_search(message: Message, deal: dict):
+    """Поиск сделки по номеру (64К, 73М и т.д.)."""
+    await message.answer(f"🔍 Ищу сделку {deal['full']}...")
+    try:
+        leads = await search_leads_by_number(deal['search_query'])
+        if not leads:
+            await message.answer(
+                f"❌ Активных сделок с номером <b>{deal['full']}</b> не найдено.\n"
+                f"Если нужно найти закрытую — напиши «найди закрытую {deal['full']}»",
+                parse_mode="HTML"
+            )
+            return
+
+        from services.amocrm import get_pipelines, get_users, _async_request
+        pipelines = await get_pipelines()
+        users = await get_users()
+
+        if len(leads) == 1:
+            full = await _async_request(
+                "GET", f"/leads/{leads[0]['id']}",
+                params={"with": "contacts,custom_fields"}
+            )
+            if full.get("id"):
+                text = format_lead_card(full, pipelines, users)
+                await message.answer(text, parse_mode="HTML")
+                return
+
+        # Несколько — список
+        text = f"{deal['emoji']} <b>Найдено сделок с номером {deal['full']}: {len(leads)}</b>\n\n"
+        for lead in leads:
+            text += format_lead(lead) + "\n\n"
+        await message.answer(text, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"Deal number search error: {e}")
+        await message.answer(f"❌ Ошибка поиска: {str(e)[:100]}")
+
+
 async def handle_lead_search(message: Message, query: str):
     await message.answer("🔍 Ищу в AmoCRM...")
     try:
-        leads = await search_leads(query, limit=5)
+        include_closed = any(w in query.lower() for w in ("закрыт", "реализован", "архив"))
+        leads = await search_leads(query, limit=5, include_closed=include_closed)
         if not leads:
             await message.answer(f"❌ Сделок по запросу «{query}» не найдено.")
             return
@@ -265,7 +306,7 @@ async def handle_amo_request(message: Message, user_text: str):
     # Номер сделки (64К, 73М, 82ЖД, 91А, 107Авто)
     deal = parse_deal_number(user_text)
     if deal and not any(tr in text_lower for tr in TASK_TRIGGERS + CONTACT_TRIGGERS):
-        await handle_lead_search(message, deal['search_query'])
+        await handle_deal_number_search(message, deal)
         return
 
     # Поиск сделок
