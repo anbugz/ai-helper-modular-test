@@ -301,7 +301,7 @@ async def add_note(entity_id: int, text: str, entity_type: str = "leads") -> dic
 # ─── Просроченные задачи ─────────────────────────────────────────────────────
 
 async def get_overdue_tasks(responsible_user_id: int = None) -> list:
-    """Возвращает просроченные задачи."""
+    """Возвращает просроченные задачи с названием сделки."""
     params = {
         "filter[is_completed]": 0,
         "filter[complete_till][to]": int(datetime.now().timestamp()),
@@ -314,27 +314,41 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
     resp = await _async_request("GET", "/tasks", params=params)
     tasks = resp.get("_embedded", {}).get("tasks", [])
     users = await get_users()
+
+    # Собираем ID сделок чтобы получить названия
+    lead_ids = [t.get("entity_id") for t in tasks if t.get("entity_type") == "leads" and t.get("entity_id")]
+    lead_names = {}
+    if lead_ids:
+        # Получаем названия сделок пачкой
+        ids_str = ",".join(str(i) for i in lead_ids[:20])
+        leads_resp = await _async_request("GET", "/leads", params={"filter[id][]": lead_ids[:20], "limit": 20})
+        for lead in leads_resp.get("_embedded", {}).get("leads", []):
+            lead_names[lead["id"]] = lead.get("name", "—")
+
     result = []
     for t in tasks:
         due = datetime.fromtimestamp(t.get("complete_till", 0))
+        entity_id = t.get("entity_id")
+        entity_type = t.get("entity_type")
+        lead_name = lead_names.get(entity_id, "") if entity_type == "leads" else ""
         result.append({
             "id": t["id"],
             "text": t.get("text", "—"),
             "due": due.strftime("%d.%m.%Y %H:%M"),
             "responsible": users.get(t.get("responsible_user_id", 0), "—"),
-            "entity_id": t.get("entity_id"),
-            "entity_type": t.get("entity_type"),
+            "entity_id": entity_id,
+            "entity_type": entity_type,
+            "lead_name": lead_name,
         })
     return result
 
 
 async def get_stale_leads(days: int = 7, responsible_user_id: int = None) -> list:
-    """Возвращает сделки которые не двигались N дней."""
+    """Возвращает активные сделки которые не двигались N дней (без закрытых)."""
     threshold = int((datetime.now() - timedelta(days=days)).timestamp())
     params = {
         "filter[updated_at][to]": threshold,
-        "filter[statuses][0][pipeline_id]": 0,  # все воронки
-        "limit": 20,
+        "limit": 50,
     }
     if responsible_user_id:
         params["filter[responsible_user_id][]"] = responsible_user_id
@@ -343,19 +357,27 @@ async def get_stale_leads(days: int = 7, responsible_user_id: int = None) -> lis
     leads = resp.get("_embedded", {}).get("leads", [])
     pipelines = await get_pipelines()
     users = await get_users()
+
+    CLOSED_STATUS_IDS = {142, 143}
+
     result = []
     for lead in leads:
         pipeline_id = lead.get("pipeline_id", 0)
         status_id = lead.get("status_id", 0)
+        if status_id in CLOSED_STATUS_IDS:
+            continue
         pipeline = pipelines.get(pipeline_id, {})
+        status_name = pipeline.get("statuses", {}).get(status_id, "—")
+        if any(w in status_name.lower() for w in ("закрыто", "реализовано", "отказ")):
+            continue
         updated = datetime.fromtimestamp(lead.get("updated_at", 0))
         days_ago = (datetime.now() - updated).days
         result.append({
             "id": lead["id"],
             "name": lead.get("name", "—"),
             "pipeline": pipeline.get("name", "—"),
-            "status": pipeline.get("statuses", {}).get(status_id, "—"),
+            "status": status_name,
             "responsible": users.get(lead.get("responsible_user_id", 0), "—"),
             "days_ago": days_ago,
         })
-    return result
+    return result[:20]
