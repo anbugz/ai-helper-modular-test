@@ -193,6 +193,11 @@ def format_lead_card(lead: dict, pipelines: dict, users: dict) -> str:
         for item in checklist:
             lines.append(f"  • {item}")
 
+    # Подсказка по задачам
+    if deal_info:
+        lines.append("")
+        lines.append(f"💡 <i>Задача по сделке: «напомни по {deal_info['full']} завтра в 10 [текст]»</i>")
+
     return '\n'.join(line for line in lines)
 
 
