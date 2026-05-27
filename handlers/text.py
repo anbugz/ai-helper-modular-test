@@ -320,6 +320,15 @@ async def handle_text(message: Message):
             return
         # Если не обработано (например state='select') — продолжаем
 
+    # === AMOCRM — проверяем до основных сценариев ===
+    try:
+        from handlers.amo import is_amo_request, handle_amo_request
+        if is_amo_request(user_text):
+            await handle_amo_request(message, user_text)
+            return
+    except Exception as _amo_err:
+        logger.warning(f"AmoCRM handler error: {_amo_err}")
+
     is_attack, reason = full_security_scan(user_text, user_id)
     if is_attack:
         if reason == "USER_BLOCKED":
