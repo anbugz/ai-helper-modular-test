@@ -142,11 +142,18 @@ async def get_user_name(user_id: int) -> str:
 
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
 
-async def search_leads(query: str, limit: int = 5) -> list:
-    """Ищет сделки по названию или контакту."""
+# Системные ID закрытых статусов AmoCRM
+CLOSED_STATUS_IDS = {142, 143}
+CLOSED_STATUS_WORDS = ("закрыто", "реализовано", "отказ", "не реализован")
+
+
+async def search_leads(query: str, limit: int = 5, include_closed: bool = False) -> list:
+    """Ищет сделки по названию или контакту.
+    По умолчанию исключает закрытые и реализованные сделки.
+    """
     resp = await _async_request("GET", "/leads", params={
         "query": query,
-        "limit": limit,
+        "limit": limit * 3,  # Берём больше чтобы хватило после фильтрации
         "with": "contacts,custom_fields",
     })
     leads = resp.get("_embedded", {}).get("leads", [])
@@ -160,12 +167,16 @@ async def search_leads(query: str, limit: int = 5) -> list:
         pipeline = pipelines.get(pipeline_id, {})
         pipeline_name = pipeline.get("name", "—")
         status_name = pipeline.get("statuses", {}).get(status_id, "—")
-        responsible = users.get(lead.get("responsible_user_id", 0), "—")
 
-        # Контакты
-        contacts = []
-        for c in lead.get("_embedded", {}).get("contacts", []):
-            contacts.append(c.get("name", ""))
+        # Фильтруем закрытые если не запрошено явно
+        if not include_closed:
+            if status_id in CLOSED_STATUS_IDS:
+                continue
+            if any(w in status_name.lower() for w in CLOSED_STATUS_WORDS):
+                continue
+
+        responsible = users.get(lead.get("responsible_user_id", 0), "—")
+        contacts = [c.get("name", "") for c in lead.get("_embedded", {}).get("contacts", [])]
 
         result.append({
             "id": lead["id"],
@@ -178,6 +189,57 @@ async def search_leads(query: str, limit: int = 5) -> list:
             "created_at": lead.get("created_at", 0),
             "updated_at": lead.get("updated_at", 0),
         })
+
+        if len(result) >= limit:
+            break
+
+    return result
+
+
+async def search_leads_by_number(deal_number: str) -> list:
+    """Ищет сделки по номеру (64К, 73М и т.д.) — только активные,
+    только те у которых название начинается с номера."""
+    resp = await _async_request("GET", "/leads", params={
+        "query": deal_number,
+        "limit": 20,
+        "with": "contacts,custom_fields",
+    })
+    leads = resp.get("_embedded", {}).get("leads", [])
+    pipelines = await get_pipelines()
+    users = await get_users()
+
+    import re
+    result = []
+    for lead in leads:
+        name = lead.get("name", "")
+        # Название должно НАЧИНАТЬСЯ с номера сделки
+        if not re.match(rf'^{re.escape(deal_number)}[\\s\\-_]', name, re.IGNORECASE):
+            continue
+
+        pipeline_id = lead.get("pipeline_id", 0)
+        status_id = lead.get("status_id", 0)
+        pipeline = pipelines.get(pipeline_id, {})
+        status_name = pipeline.get("statuses", {}).get(status_id, "—")
+
+        # Пропускаем закрытые
+        if status_id in CLOSED_STATUS_IDS:
+            continue
+        if any(w in status_name.lower() for w in CLOSED_STATUS_WORDS):
+            continue
+
+        responsible = users.get(lead.get("responsible_user_id", 0), "—")
+        contacts = [c.get("name", "") for c in lead.get("_embedded", {}).get("contacts", [])]
+        result.append({
+            "id": lead["id"],
+            "name": name,
+            "price": lead.get("price", 0),
+            "pipeline": pipeline.get("name", "—"),
+            "status": status_name,
+            "responsible": responsible,
+            "contacts": contacts,
+            "updated_at": lead.get("updated_at", 0),
+        })
+
     return result
 
 
