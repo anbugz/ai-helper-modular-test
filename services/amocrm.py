@@ -22,6 +22,25 @@ AMO_ACCESS_TOKEN = os.getenv("AMO_ACCESS_TOKEN", "")
 AMO_CLIENT_ID = os.getenv("AMO_CLIENT_ID", "")
 AMO_CLIENT_SECRET = os.getenv("AMO_CLIENT_SECRET", "")
 
+# Маппинг Telegram ID → AmoCRM user ID
+# Формат в .env: AMO_USERS=telegram_id:amo_id,telegram_id:amo_id
+_amo_users_raw = os.getenv("AMO_USERS", "")
+TG_TO_AMO: dict = {}
+if _amo_users_raw:
+    for pair in _amo_users_raw.split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            tg_id, amo_id = pair.split(":", 1)
+            try:
+                TG_TO_AMO[int(tg_id.strip())] = int(amo_id.strip())
+            except ValueError:
+                pass
+
+
+def get_amo_user_id(telegram_id: int) -> int | None:
+    """Возвращает AmoCRM user ID по Telegram ID."""
+    return TG_TO_AMO.get(telegram_id)
+
 BASE_URL = f"https://{AMO_DOMAIN}/api/v4"
 
 # Кеш воронок: {pipeline_id: {name, statuses: {status_id: name}}}
