@@ -367,34 +367,6 @@ def download_template(url: str) -> io.BytesIO | None:
 
 
 # ─── Заполнение шаблона ──────────────────────────────────────────────────────
-def _fix_gender_in_docx(path: str):
-    """Исправляет род для ИП женского пола в уже заполненном docx."""
-    try:
-        from docx import Document as DocxDocument
-        doc = DocxDocument(path)
-        replacements = [
-            ("именуемое в дальнейшем «Клиент»", "именуемая в дальнейшем «Клиент»"),
-            ("действующего на основании ОГРНИП", "действующей на основании ОГРНИП"),
-            ("действующего на основании доверенност", "действующей на основании доверенност"),
-        ]
-        def fix_para(para):
-            for old, new in replacements:
-                if old in para.text:
-                    for run in para.runs:
-                        if old in run.text:
-                            run.text = run.text.replace(old, new)
-        for para in doc.paragraphs:
-            fix_para(para)
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        fix_para(para)
-        doc.save(path)
-    except Exception as e:
-        logger.warning(f"Gender fix error: {e}")
-
-
 def fill_contract(template_stream: io.BytesIO, data: dict, manager: dict, contract_key: str, contract_number: str) -> str:
     try:
         from docxtpl import DocxTemplate
@@ -452,11 +424,6 @@ def fill_contract(template_stream: io.BytesIO, data: dict, manager: dict, contra
         doc.render(context)
         out_path = tempfile.NamedTemporaryFile(suffix='.docx', delete=False).name
         doc.save(out_path)
-
-        # Пост-обработка: исправляем род для ИП женского пола
-        if context.get('is_individual_entrepreneur') and context.get('acting_form') == 'действующей':
-            _fix_gender_in_docx(out_path)
-
         return out_path
     finally:
         if os.path.exists(tmp_path):
