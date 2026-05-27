@@ -196,6 +196,25 @@ async def search_leads(query: str, limit: int = 5, include_closed: bool = False)
     return result
 
 
+def format_lead(lead: dict) -> str:
+    """Форматирует сделку кратко для списка."""
+    contacts_str = ", ".join(lead.get("contacts", [])) or "—"
+    price_str = f"{lead['price']:,} ₽".replace(",", " ") if lead.get("price") else "—"
+    updated = ""
+    if lead.get("updated_at"):
+        dt = datetime.fromtimestamp(lead["updated_at"])
+        updated = dt.strftime("%d.%m.%Y")
+    return (
+        f"📋 <b>{lead['name']}</b>\n"
+        f"🆔 ID: <code>{lead['id']}</code>\n"
+        f"📊 {lead.get('pipeline','—')} → <b>{lead.get('status','—')}</b>\n"
+        f"👤 Ответственный: {lead.get('responsible','—')}\n"
+        f"💰 Бюджет: {price_str}\n"
+        f"👥 Контакты: {contacts_str}\n"
+        f"🕐 Обновлена: {updated}"
+    )
+
+
 async def search_leads_by_number(deal_number: str) -> list:
     """Ищет активные сделки по номеру (64К, 73М и т.д.).
     Ищет по цифровой части, потом фильтрует по полному номеру."""
