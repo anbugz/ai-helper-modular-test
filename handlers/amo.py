@@ -30,6 +30,8 @@ router = Router()
 LEAD_TRIGGERS = [
     "найди сделку", "найти сделку", "поиск сделки", "покажи сделку",
     "сделка ", "по сделке", "статус сделки",
+    "найди поделку", "что у нас с поделкой", "что по сделке",
+    "поделка ", "по поделке", "что со сделкой", "что с поделкой",
 ]
 CONTACT_TRIGGERS = [
     "найди контакт", "покажи контакт", "реквизиты ", "данные клиента",
@@ -248,6 +250,8 @@ async def handle_amo_request(message: Message, user_text: str):
         query = user_text
         for tr in LEAD_TRIGGERS:
             query = re.sub(tr, '', query, flags=re.IGNORECASE).strip()
+        # Убираем предлоги в начале
+        query = re.sub(r'^(с|со|по|у нас|нас|что|у)\s+', '', query, flags=re.IGNORECASE).strip()
         if not query:
             await message.answer("Укажи что искать. Например: «найди сделку Ромашка»")
             return
