@@ -48,17 +48,31 @@ TASK_TRIGGERS = [
     "поставь задачу", "поставить задачу", "поставь задание",
     "задача в crm", "задача в амо", "добавь задачу",
     "запиши задачу", "задачу по", "задачу на",
+    "поставь задач",  # поставь задачу / поставь задание
+    "задач перезвон", "задач позвон", "задач провер",
 ]
+
+# Дополнительная проверка — глагол + "задачу" в любом порядке
+def _has_task_intent(text: str) -> bool:
+    t = text.lower()
+    if any(tr in t for tr in TASK_TRIGGERS):
+        return True
+    # "поставь ... задачу", "создай ... задачу" — глагол и слово задачу в тексте
+    task_verbs = ("поставь", "поставить", "создай", "создать", "добавь", "запиши", "поставь")
+    has_verb = any(v in t for v in task_verbs)
+    has_noun = "задач" in t
+    return has_verb and has_noun
 
 
 def is_amo_request(text: str) -> bool:
     if text.startswith("/"):
         return False
     t = text.lower()
-    # Номер сделки (64К, 73М, 82ЖД и т.д.)
     if is_deal_number_request(text):
         return True
-    return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS + TASK_TRIGGERS)
+    if _has_task_intent(text):
+        return True
+    return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS)
 
 
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
@@ -381,7 +395,7 @@ async def handle_amo_request(message: Message, user_text: str):
 
     # Номер сделки (64К, 73М, 82ЖД, 91А, 107Авто)
     deal = parse_deal_number(user_text)
-    if deal and not any(tr in text_lower for tr in TASK_TRIGGERS + CONTACT_TRIGGERS):
+    if deal and not _has_task_intent(user_text) and not any(tr in text_lower for tr in CONTACT_TRIGGERS):
         await handle_deal_number_search(message, deal)
         return
 
@@ -409,7 +423,7 @@ async def handle_amo_request(message: Message, user_text: str):
         await handle_contact_search(message, query)
 
     # Создание задачи
-    elif any(tr in text_lower for tr in TASK_TRIGGERS):
+    elif _has_task_intent(user_text):
         await handle_task_create(message, user_text)
 
     else:
