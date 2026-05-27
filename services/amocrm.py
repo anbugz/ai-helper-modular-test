@@ -456,3 +456,4 @@ async def get_stale_leads(days: int = 7, responsible_user_id: int = None) -> lis
             "days_ago": days_ago,
         })
     return result[:20]
+
