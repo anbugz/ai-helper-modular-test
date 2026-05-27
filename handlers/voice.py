@@ -39,7 +39,11 @@ async def handle_voice(message: Message):
     processing_msg = await message.answer("🎤 Распознаю голосовое...")
 
     # Распознаём (Deepgram API — в отдельном потоке, чтобы не блокировать бота)
-    recognized_text = await asyncio.to_thread(speech_to_text, ogg_path)
+    import inspect
+    if inspect.iscoroutinefunction(speech_to_text):
+        recognized_text = await speech_to_text(ogg_path)
+    else:
+        recognized_text = await asyncio.to_thread(speech_to_text, ogg_path)
 
     # Удаляем временный файл
     try:
