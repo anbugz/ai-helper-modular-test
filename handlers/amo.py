@@ -158,10 +158,8 @@ async def handle_task_create(message: Message, raw_text: str):
     task_text, due_dt = parse_task_datetime(raw_text)
     status = await message.answer("⏳ Создаю задачу в AmoCRM...")
     try:
-        # Определяем ответственного по Telegram ID
-        users = await get_users()
-        # Берём первого пользователя (или можно добавить маппинг telegram_id → amo_user_id)
-        responsible_id = None
+        from services.amocrm import get_amo_user_id
+        responsible_id = get_amo_user_id(message.from_user.id)
 
         task = await create_task(
             text=task_text,
@@ -190,7 +188,9 @@ async def handle_task_create(message: Message, raw_text: str):
 async def cmd_overdue(message: Message):
     status = await message.answer("⏳ Загружаю просроченные задачи...")
     try:
-        tasks = await get_overdue_tasks()
+        from services.amocrm import get_amo_user_id
+        amo_user_id = get_amo_user_id(message.from_user.id)
+        tasks = await get_overdue_tasks(responsible_user_id=amo_user_id)
         if not tasks:
             await status.edit_text("✅ Просроченных задач нет!")
             return
@@ -213,7 +213,9 @@ async def cmd_overdue(message: Message):
 async def cmd_stale(message: Message):
     status = await message.answer("⏳ Загружаю сделки без движения...")
     try:
-        leads = await get_stale_leads(days=7)
+        from services.amocrm import get_amo_user_id
+        amo_user_id = get_amo_user_id(message.from_user.id)
+        leads = await get_stale_leads(days=7, responsible_user_id=amo_user_id)
         if not leads:
             await status.edit_text("✅ Все сделки активны!")
             return
