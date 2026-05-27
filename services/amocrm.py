@@ -337,7 +337,9 @@ async def create_task(
     if responsible_user_id:
         payload["responsible_user_id"] = responsible_user_id
 
+    logger.info(f"TASK PAYLOAD: {payload}")
     resp = await _async_request("POST", "/tasks", data=[payload])
+    logger.info(f"TASK RESPONSE: {resp}")
     tasks = resp.get("_embedded", {}).get("tasks", [])
     return tasks[0] if tasks else {}
 
