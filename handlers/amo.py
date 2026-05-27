@@ -9,6 +9,7 @@ handlers/amo.py — команды для работы с AmoCRM.
 - /stale → сделки без движения
 """
 import re
+import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -196,10 +197,23 @@ def parse_task_datetime(text: str) -> tuple:
         due = now.replace(second=0, microsecond=0)
         text = re.sub(r"сегодня", "", text, flags=re.IGNORECASE)
 
-    days_match = re.search(r"через\s+(\d+)\s+дн", text)
-    if days_match:
-        due = (now + timedelta(days=int(days_match.group(1)))).replace(hour=10, minute=0, second=0, microsecond=0)
-        text = text[:days_match.start()] + text[days_match.end():]
+    # Через N минут / часов / дней
+    time_delta_match = re.search(
+        r"через\s+(\d+)\s+(минут|мин|час|часов|ч|дн|день|дней|неделю|недел)",
+        text, re.IGNORECASE
+    )
+    if time_delta_match:
+        n = int(time_delta_match.group(1))
+        unit = time_delta_match.group(2).lower()
+        if unit in ("минут", "мин"):
+            due = now + timedelta(minutes=n)
+        elif unit in ("час", "часов", "ч"):
+            due = now + timedelta(hours=n)
+        elif unit in ("неделю", "недел"):
+            due = now + timedelta(weeks=n)
+        else:  # дней, день, дн
+            due = (now + timedelta(days=n)).replace(hour=10, minute=0, second=0, microsecond=0)
+        text = text[:time_delta_match.start()] + text[time_delta_match.end():]
 
     if time_match:
         due = due.replace(
@@ -211,6 +225,21 @@ def parse_task_datetime(text: str) -> tuple:
     text = re.sub(r"^(по|для|к)\s+", "", text.strip(), flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip(" ,.")
     return text or "Задача из Telegram", due, deal_info
+
+
+async def _remind_later(chat_id: int, task_text: str, deal_name: str, delay: float):
+    """Отправляет напоминание в Telegram через delay секунд."""
+    await asyncio.sleep(delay)
+    try:
+        from bot_instance import bot
+        deal_str = f"\n🔗 {deal_name}" if deal_name else ""
+        await bot.send_message(
+            chat_id,
+            f"⏰ <b>Напоминание!</b>\n\n📝 {task_text}{deal_str}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Remind error: {e}")
 
 
 async def handle_task_create(message: Message, raw_text: str):
@@ -251,6 +280,12 @@ async def handle_task_create(message: Message, raw_text: str):
                 f"🆔 ID: {task['id']}",
                 parse_mode="HTML"
             )
+            # Если срок меньше часа — ставим напоминание в Telegram
+            delay = (due_dt - datetime.now()).total_seconds()
+            if 0 < delay <= 3600:
+                asyncio.create_task(
+                    _remind_later(message.chat.id, task_text, deal_name, delay)
+                )
         else:
             await message.answer("❌ Не удалось создать задачу.")
     except Exception as e:
