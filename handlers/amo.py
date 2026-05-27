@@ -197,7 +197,12 @@ async def cmd_overdue(message: Message):
 
         text = f"⚠️ <b>Просроченные задачи: {len(tasks)}</b>\n\n"
         for t in tasks[:10]:
-            lead_info = t.get('lead_name') or (f"Сделка {t['entity_id']}" if t.get('entity_id') else "Без сделки")
+            if t.get('lead_name') and t.get('entity_id'):
+                lead_info = f"{t['lead_name']} (ID: {t['entity_id']})"
+            elif t.get('entity_id'):
+                lead_info = f"Сделка {t['entity_id']}"
+            else:
+                lead_info = "Без сделки"
             text += (
                 f"• <b>{t['text'][:60]}</b>\n"
                 f"  📅 Срок: {t['due']} | 👤 {t['responsible']}\n"
