@@ -323,14 +323,26 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
         for lid in lead_ids[:5]:
             lead_resp = await _async_request("GET", f"/leads/{lid}")
             if lead_resp.get("id"):
-                lead_names[lead_resp["id"]] = lead_resp.get("name", "—")
+                lead_names[lead_resp["id"]] = {
+                    "name": lead_resp.get("name", "—"),
+                    "pipeline_id": lead_resp.get("pipeline_id"),
+                    "status_id": lead_resp.get("status_id"),
+                }
 
     result = []
     for t in tasks:
         due = datetime.fromtimestamp(t.get("complete_till", 0))
         entity_id = t.get("entity_id")
         entity_type = t.get("entity_type")
-        lead_name = lead_names.get(entity_id, "") if entity_type == "leads" else ""
+        lead_data = lead_names.get(entity_id, {}) if entity_type == "leads" else {}
+        lead_name = lead_data.get("name", "") if isinstance(lead_data, dict) else str(lead_data)
+        pipeline_id = lead_data.get("pipeline_id") if isinstance(lead_data, dict) else None
+        status_id = lead_data.get("status_id") if isinstance(lead_data, dict) else None
+        pipeline_name = ""
+        status_name = ""
+        if pipeline_id and pipeline_id in _pipelines_cache:
+            pipeline_name = _pipelines_cache[pipeline_id].get("name", "")
+            status_name = _pipelines_cache[pipeline_id].get("statuses", {}).get(status_id, "")
         result.append({
             "id": t["id"],
             "text": t.get("text", "—"),
@@ -339,6 +351,8 @@ async def get_overdue_tasks(responsible_user_id: int = None) -> list:
             "entity_id": entity_id,
             "entity_type": entity_type,
             "lead_name": lead_name,
+            "pipeline": pipeline_name,
+            "status": status_name,
         })
     return result
 
