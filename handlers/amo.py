@@ -164,81 +164,98 @@ async def handle_contact_search(message: Message, query: str):
 
 # ─── Парсинг задачи ───────────────────────────────────────────────────────────
 
-def parse_task_datetime(text: str) -> tuple[str, datetime]:
-    """Парсит дату/время из текста задачи. Возвращает (текст_задачи, datetime)."""
+def parse_task_datetime(text: str) -> tuple:
+    """Парсит дату/время и номер сделки из текста задачи.
+    Возвращает (текст_задачи, datetime, deal_info_or_None)
+    """
+    from services.amo_leads import parse_deal_number
     now = datetime.now()
-    due = now + timedelta(days=1)
-    due = due.replace(hour=10, minute=0, second=0, microsecond=0)
+    due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
 
-    # Убираем триггер
     for tr in TASK_TRIGGERS:
-        text = re.sub(tr, '', text, flags=re.IGNORECASE).strip()
+        text = re.sub(tr, "", text, flags=re.IGNORECASE).strip()
 
-    # Ищем время: "в 15:30", "в 10", "в 9"
-    time_match = re.search(r'в\s+(\d{1,2})(?::(\d{2}))?', text)
+    # Ищем номер сделки (64К, 73М и т.д.)
+    deal_info = parse_deal_number(text)
+    if deal_info:
+        text = re.sub(r"\b" + re.escape(deal_info["full"]) + r"\b", "", text, flags=re.IGNORECASE).strip()
+
+    # Ищем время: "в 15:30", "в 10"
+    time_match = re.search(r"в\s+(\d{1,2})(?::(\d{2}))?", text)
     if time_match:
-        hour = int(time_match.group(1))
-        minute = int(time_match.group(2)) if time_match.group(2) else 0
-        due = due.replace(hour=hour, minute=minute)
         text = text[:time_match.start()] + text[time_match.end():]
 
-    # Ищем день: "завтра", "послезавтра", "через N дней", "в пн/вт/..."
-    if 'послезавтра' in text.lower():
-        due = now + timedelta(days=2)
-        due = due.replace(hour=due.hour, minute=0, second=0, microsecond=0)
-        text = re.sub(r'послезавтра', '', text, flags=re.IGNORECASE)
-    elif 'завтра' in text.lower():
-        due = now + timedelta(days=1)
-        due = due.replace(hour=10, minute=0, second=0, microsecond=0)
-        text = re.sub(r'завтра', '', text, flags=re.IGNORECASE)
-    elif 'сегодня' in text.lower():
-        due = now
-        text = re.sub(r'сегодня', '', text, flags=re.IGNORECASE)
+    # Ищем день
+    if "послезавтра" in text.lower():
+        due = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
+        text = re.sub(r"послезавтра", "", text, flags=re.IGNORECASE)
+    elif "завтра" in text.lower():
+        due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+        text = re.sub(r"завтра", "", text, flags=re.IGNORECASE)
+    elif "сегодня" in text.lower():
+        due = now.replace(second=0, microsecond=0)
+        text = re.sub(r"сегодня", "", text, flags=re.IGNORECASE)
 
-    days_match = re.search(r'через\s+(\d+)\s+дн', text)
+    days_match = re.search(r"через\s+(\d+)\s+дн", text)
     if days_match:
-        due = now + timedelta(days=int(days_match.group(1)))
+        due = (now + timedelta(days=int(days_match.group(1)))).replace(hour=10, minute=0, second=0, microsecond=0)
         text = text[:days_match.start()] + text[days_match.end():]
 
-    # Применяем время если нашли
     if time_match:
-        due = due.replace(hour=int(time_match.group(1)),
-                         minute=int(time_match.group(2)) if time_match.group(2) else 0,
-                         second=0, microsecond=0)
+        due = due.replace(
+            hour=int(time_match.group(1)),
+            minute=int(time_match.group(2)) if time_match.group(2) else 0,
+            second=0, microsecond=0
+        )
 
-    text = re.sub(r'\s+', ' ', text).strip()
-    text = text.strip(',. ')
-    return text or "Задача из Telegram", due
+    text = re.sub(r"^(по|для|к)\s+", "", text.strip(), flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ,.")
+    return text or "Задача из Telegram", due, deal_info
 
 
 async def handle_task_create(message: Message, raw_text: str):
-    task_text, due_dt = parse_task_datetime(raw_text)
+    """Создаёт задачу в AmoCRM. Если есть номер сделки — привязывает."""
+    task_text, due_dt, deal_info = parse_task_datetime(raw_text)
+    await message.answer("⏳ Создаю задачу в AmoCRM...")
     try:
-        from services.amocrm import get_amo_user_id
+        from services.amocrm import get_amo_user_id, search_leads_by_number
         responsible_id = get_amo_user_id(message.from_user.id)
+        entity_id = None
+        deal_name = ""
+
+        if deal_info:
+            leads = await search_leads_by_number(deal_info["search_query"])
+            if leads:
+                entity_id = leads[0]["id"]
+                deal_name = leads[0]["name"]
+            else:
+                await message.answer(
+                    f"⚠️ Сделка <b>{deal_info['full']}</b> не найдена — задача без привязки.",
+                    parse_mode="HTML"
+                )
 
         task = await create_task(
             text=task_text,
+            entity_id=entity_id,
             due_dt=due_dt,
             responsible_user_id=responsible_id,
         )
         if task.get("id"):
             due_str = due_dt.strftime("%d.%m.%Y в %H:%M")
+            deal_str = f"\n🔗 Сделка: <b>{deal_name}</b>" if deal_name else ""
             await message.answer(
-                f"✅ <b>Задача создана в AmoCRM</b>\n\n"
+                f"✅ <b>Задача создана</b>\n\n"
                 f"📝 {task_text}\n"
-                f"🕐 Срок: {due_str}\n"
-                f"🆔 ID задачи: {task['id']}",
+                f"🕐 Срок: {due_str}"
+                f"{deal_str}\n"
+                f"🆔 ID: {task['id']}",
                 parse_mode="HTML"
             )
         else:
-            await message.answer("❌ Не удалось создать задачу. Проверь настройки AmoCRM.")
+            await message.answer("❌ Не удалось создать задачу.")
     except Exception as e:
         logger.error(f"Task create error: {e}")
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
-
-
-# ─── Просроченные задачи ─────────────────────────────────────────────────────
 
 @router.message(Command("overdue"))
 async def cmd_overdue(message: Message):
