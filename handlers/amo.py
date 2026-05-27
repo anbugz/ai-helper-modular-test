@@ -199,7 +199,7 @@ def parse_task_datetime(text: str) -> tuple:
         text = re.sub(r"\b" + re.escape(deal_info["full"]) + r"\b", "", text, flags=re.IGNORECASE).strip()
 
     # Ищем время: "в 15:30", "в 10"
-    time_match = re.search(r"в\s+(\d{1,2})(?::(\d{2}))?", text)
+    time_match = re.search(r"в\s+(\d{1,2})(?:[:\-](\d{2}))?", text)
     if time_match:
         text = text[:time_match.start()] + text[time_match.end():]
 
