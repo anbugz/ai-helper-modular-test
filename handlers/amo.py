@@ -52,32 +52,30 @@ def is_amo_request(text: str) -> bool:
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
 
 async def handle_lead_search(message: Message, query: str):
-    status = await message.answer("🔍 Ищу в AmoCRM...")
     try:
         leads = await search_leads(query, limit=5)
         if not leads:
-            await status.edit_text(f"❌ Сделок по запросу «{query}» не найдено.")
+            await message.answer(f"❌ Сделок по запросу «{query}» не найдено.")
             return
 
         text = f"📋 <b>Найдено сделок: {len(leads)}</b> по запросу «{query}»\n\n"
         for lead in leads:
             text += format_lead(lead) + "\n\n"
-        await status.edit_text(text, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Lead search error: {e}")
-        await status.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
+        await message.answer(f"❌ Ошибка поиска: {str(e)[:100]}")
 
 
 # ─── Поиск контактов/компаний ────────────────────────────────────────────────
 
 async def handle_contact_search(message: Message, query: str):
-    status = await message.answer("🔍 Ищу контакты в AmoCRM...")
     try:
         contacts = await search_contacts(query, limit=3)
         companies = await search_companies(query, limit=3)
 
         if not contacts and not companies:
-            await status.edit_text(f"❌ Контактов/компаний по запросу «{query}» не найдено.")
+            await message.answer(f"❌ Контактов/компаний по запросу «{query}» не найдено.")
             return
 
         text = f"👥 <b>Результаты поиска по «{query}»</b>\n\n"
@@ -97,10 +95,10 @@ async def handle_contact_search(message: Message, query: str):
                 for fname, fval in list(c['fields'].items())[:5]:
                     text += f"  {fname}: {fval}\n"
 
-        await status.edit_text(text, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Contact search error: {e}")
-        await status.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
+        await message.answer(f"❌ Ошибка поиска: {str(e)[:100]}")
 
 
 # ─── Парсинг задачи ───────────────────────────────────────────────────────────
@@ -154,7 +152,6 @@ def parse_task_datetime(text: str) -> tuple[str, datetime]:
 
 async def handle_task_create(message: Message, raw_text: str):
     task_text, due_dt = parse_task_datetime(raw_text)
-    status = await message.answer("⏳ Создаю задачу в AmoCRM...")
     try:
         from services.amocrm import get_amo_user_id
         responsible_id = get_amo_user_id(message.from_user.id)
@@ -166,7 +163,7 @@ async def handle_task_create(message: Message, raw_text: str):
         )
         if task.get("id"):
             due_str = due_dt.strftime("%d.%m.%Y в %H:%M")
-            await status.edit_text(
+            await message.answer(
                 f"✅ <b>Задача создана в AmoCRM</b>\n\n"
                 f"📝 {task_text}\n"
                 f"🕐 Срок: {due_str}\n"
@@ -174,23 +171,23 @@ async def handle_task_create(message: Message, raw_text: str):
                 parse_mode="HTML"
             )
         else:
-            await status.edit_text("❌ Не удалось создать задачу. Проверь настройки AmoCRM.")
+            await message.answer("❌ Не удалось создать задачу. Проверь настройки AmoCRM.")
     except Exception as e:
         logger.error(f"Task create error: {e}")
-        await status.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
 # ─── Просроченные задачи ─────────────────────────────────────────────────────
 
 @router.message(Command("overdue"))
 async def cmd_overdue(message: Message):
-    status = await message.answer("⏳ Загружаю просроченные задачи...")
+    await message.answer("⏳ Загружаю просроченные задачи...")
     try:
         from services.amocrm import get_amo_user_id
         amo_user_id = get_amo_user_id(message.from_user.id)
         tasks = await get_overdue_tasks(responsible_user_id=amo_user_id)
         if not tasks:
-            await status.edit_text("✅ Просроченных задач нет!")
+            await message.answer("✅ Просроченных задач нет!")
             return
 
         text = f"⚠️ <b>Просроченные задачи: {len(tasks)}</b>\n\n"
@@ -209,22 +206,22 @@ async def cmd_overdue(message: Message):
                 f"  📅 Срок: {t['due']}\n"
                 f"  📝 {t['text'][:80]}\n\n"
             )
-        await status.edit_text(text, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
 # ─── Сделки без движения ──────────────────────────────────────────────────────
 
 @router.message(Command("stale"))
 async def cmd_stale(message: Message):
-    status = await message.answer("⏳ Загружаю сделки без движения...")
+    await message.answer("⏳ Загружаю сделки без движения...")
     try:
         from services.amocrm import get_amo_user_id
         amo_user_id = get_amo_user_id(message.from_user.id)
         leads = await get_stale_leads(days=7, responsible_user_id=amo_user_id)
         if not leads:
-            await status.edit_text("✅ Все сделки активны!")
+            await message.answer("✅ Все сделки активны!")
             return
 
         text = f"😴 <b>Сделки без движения 7+ дней: {len(leads)}</b>\n\n"
@@ -234,9 +231,9 @@ async def cmd_stale(message: Message):
                 f"  📊 {lead['pipeline']} → {lead['status']}\n"
                 f"  👤 {lead['responsible']} | ⏱ {lead['days_ago']} дней\n\n"
             )
-        await status.edit_text(text, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
 # ─── Главная точка входа (вызывается из text.py) ─────────────────────────────
