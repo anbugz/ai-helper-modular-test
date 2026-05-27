@@ -200,8 +200,7 @@ async def search_leads_by_number(deal_number: str) -> list:
     """Ищет активные сделки по номеру (64К, 73М и т.д.).
     Ищет по цифровой части, потом фильтрует по полному номеру."""
     import re
-    digits_match = re.match(r"^(\d+)", deal_number)
-    search_query = digits_match.group(1) if digits_match else deal_number
+    search_query = deal_number  # Ищем по полному номеру (64К, 73М и т.д.)
 
     resp = await _async_request("GET", "/leads", params={
         "query": search_query,
