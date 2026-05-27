@@ -200,21 +200,42 @@ def parse_task_datetime(text: str) -> tuple:
         due = now.replace(second=0, microsecond=0)
         text = re.sub(r"сегодня", "", text, flags=re.IGNORECASE)
 
-    # Через N минут / часов / дней
-    time_delta_match = re.search(
-        r"через\s+(\d+)\s+(минут|мин|час|часов|ч|дн|день|дней|неделю|недел)",
+    # Через N минут / часов / дней (+ словесные формы: минуту, час, день)
+    WORD_NUMS = {"одн": 1, "одну": 1, "один": 1, "дв": 2, "две": 2, "три": 3,
+                 "четыр": 4, "пять": 5, "пяти": 5, "десять": 10, "пятнадц": 15,
+                 "двадц": 20, "полчаса": 30, "полчас": 30}
+    # Сначала проверяем "через минуту/час/день" (без числа)
+    single_match = re.search(r"через\s+(минуту|минутку|час|день|неделю)", text, re.IGNORECASE)
+    if single_match:
+        unit = single_match.group(1).lower()
+        if unit in ("минуту", "минутку"):
+            due = now + timedelta(minutes=1)
+        elif unit == "час":
+            due = now + timedelta(hours=1)
+        elif unit == "день":
+            due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+        elif unit == "неделю":
+            due = now + timedelta(weeks=1)
+        text = text[:single_match.start()] + text[single_match.end():]
+
+    time_delta_match = None if single_match else re.search(
+        r"через\s+(\d+|одну?|один|дв[уе]|три|четыр\w*|пять|десять|пятнадц\w*|двадц\w*|полчас\w*)\s*(минут\w*|мин|час\w*|ч|дн\w*|день|дней|недел\w*)",
         text, re.IGNORECASE
     )
     if time_delta_match:
-        n = int(time_delta_match.group(1))
+        raw_n = time_delta_match.group(1).lower()
+        try:
+            n = int(raw_n)
+        except ValueError:
+            n = next((v for k, v in WORD_NUMS.items() if raw_n.startswith(k)), 1)
         unit = time_delta_match.group(2).lower()
-        if unit in ("минут", "мин"):
+        if unit.startswith("мин"):
             due = now + timedelta(minutes=n)
-        elif unit in ("час", "часов", "ч"):
+        elif unit.startswith("час") or unit == "ч":
             due = now + timedelta(hours=n)
-        elif unit in ("неделю", "недел"):
+        elif unit.startswith("недел"):
             due = now + timedelta(weeks=n)
-        else:  # дней, день, дн
+        else:
             due = (now + timedelta(days=n)).replace(hour=10, minute=0, second=0, microsecond=0)
         text = text[:time_delta_match.start()] + text[time_delta_match.end():]
 
