@@ -197,16 +197,19 @@ async def cmd_overdue(message: Message):
 
         text = f"⚠️ <b>Просроченные задачи: {len(tasks)}</b>\n\n"
         for t in tasks[:10]:
-            if t.get('lead_name') and t.get('entity_id'):
-                lead_info = f"{t['lead_name']} (ID: {t['entity_id']})"
-            elif t.get('entity_id'):
-                lead_info = f"Сделка {t['entity_id']}"
-            else:
-                lead_info = "Без сделки"
+            lead_title = t.get('lead_name') or "Без названия"
+            lead_id = t.get('entity_id', '')
+            pipeline = t.get('pipeline', '')
+            status = t.get('status', '')
+            pipeline_str = f"{pipeline} → {status}" if pipeline and status else ""
             text += (
-                f"• <b>{t['text'][:60]}</b>\n"
-                f"  📅 Срок: {t['due']} | 👤 {t['responsible']}\n"
-                f"  🔗 {lead_info}\n\n"
+                f"• <b>{lead_title}</b> (ID: {lead_id})\n"
+            )
+            if pipeline_str:
+                text += f"  📊 {pipeline_str}\n"
+            text += (
+                f"  📅 Срок: {t['due']}\n"
+                f"  📝 {t['text'][:80]}\n\n"
             )
         await status.edit_text(text, parse_mode="HTML")
     except Exception as e:
