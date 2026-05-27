@@ -15,6 +15,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 from typing import Optional
 from config import logger
+from services.amo_leads import extract_custom_fields, format_lead_card, parse_deal_number
 
 import os
 AMO_DOMAIN = os.getenv("AMO_DOMAIN", "")
@@ -146,7 +147,7 @@ async def search_leads(query: str, limit: int = 5) -> list:
     resp = await _async_request("GET", "/leads", params={
         "query": query,
         "limit": limit,
-        "with": "contacts",
+        "with": "contacts,custom_fields",
     })
     leads = resp.get("_embedded", {}).get("leads", [])
     pipelines = await get_pipelines()
