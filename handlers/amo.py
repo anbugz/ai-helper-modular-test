@@ -43,12 +43,10 @@ TASK_TRIGGERS = [
 
 
 def is_amo_request(text: str) -> bool:
+    if text.startswith("/"):
+        return False  # Команды обрабатываются роутером напрямую
     t = text.lower()
-    return (
-        any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS + TASK_TRIGGERS)
-        or t.startswith("/overdue")
-        or t.startswith("/stale")
-    )
+    return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS + TASK_TRIGGERS)
 
 
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
