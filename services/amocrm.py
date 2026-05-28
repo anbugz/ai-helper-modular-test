@@ -337,11 +337,35 @@ async def create_task(
     if responsible_user_id:
         payload["responsible_user_id"] = responsible_user_id
 
-    logger.info(f"TASK PAYLOAD: {payload}")
     resp = await _async_request("POST", "/tasks", data=[payload])
-    logger.info(f"TASK RESPONSE: {resp}")
     tasks = resp.get("_embedded", {}).get("tasks", [])
     return tasks[0] if tasks else {}
+
+
+# ─── Задачи по сделке ────────────────────────────────────────────────────────
+
+async def get_lead_tasks(lead_id: int) -> list:
+    """Возвращает незакрытые задачи привязанные к сделке."""
+    resp = await _async_request("GET", "/tasks", params={
+        "filter[entity_id][]": lead_id,
+        "filter[entity_type]": "leads",
+        "filter[is_completed]": 0,
+        "limit": 10,
+    })
+    tasks = resp.get("_embedded", {}).get("tasks", [])
+    result = []
+    for t in tasks:
+        due_ts = t.get("complete_till")
+        due_str = ""
+        if due_ts:
+            from datetime import datetime
+            due_str = datetime.fromtimestamp(due_ts).strftime("%d.%m %H:%M")
+        result.append({
+            "id": t["id"],
+            "text": t.get("text", "—"),
+            "due": due_str,
+        })
+    return result
 
 
 # ─── Добавление примечания ────────────────────────────────────────────────────
