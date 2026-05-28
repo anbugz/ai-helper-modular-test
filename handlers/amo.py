@@ -97,7 +97,7 @@ async def handle_deal_number_search(message: Message, deal: dict):
         if len(leads) == 1:
             full = await _async_request(
                 "GET", f"/leads/{leads[0]['id']}",
-                params={"with": "contacts,custom_fields"}
+                params={"with": "contacts,custom_fields,tasks"}
             )
             if full.get("id"):
                 text = format_lead_card(full, pipelines, users)
@@ -130,7 +130,7 @@ async def handle_lead_search(message: Message, query: str):
 
         # Одна сделка — полная карточка с чеклистом
         if len(leads) == 1:
-            full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields"})
+            full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields,tasks"})
             if full.get("id"):
                 text = format_lead_card(full, pipelines, users)
                 await message.answer(text, parse_mode="HTML")
@@ -293,7 +293,6 @@ async def handle_task_create(message: Message, raw_text: str):
 
         if deal_info:
             leads = await search_leads_by_number(deal_info["search_query"])
-            logger.info(f"TASK DEBUG: deal={deal_info['full']}, leads_found={len(leads)}, first_id={leads[0]['id'] if leads else None}")
             if leads:
                 entity_id = leads[0]["id"]
                 deal_name = leads[0]["name"]
@@ -303,7 +302,6 @@ async def handle_task_create(message: Message, raw_text: str):
                     parse_mode="HTML"
                 )
 
-        logger.info(f"TASK DEBUG: entity_id={entity_id}, responsible_id={responsible_id}")
         task = await create_task(
             text=task_text,
             entity_id=entity_id,
