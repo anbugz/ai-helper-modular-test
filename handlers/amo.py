@@ -64,6 +64,17 @@ CREATE_TRIGGERS = [
     "создай заявку", "создать заявку", "добавь заявку",
 ]
 
+MYTASKS_TRIGGERS = [
+    "мои задачи", "мои таски", "что у меня", "мой список задач",
+    "покажи мои задачи", "мои дела", "/mytasks",
+]
+
+CONTACT_SEARCH_TRIGGERS = [
+    "найди контакт", "найти контакт", "поиск контакта", "контакт ",
+    "найди клиента", "найти клиента", "реквизиты контакта",
+    "телефон клиента", "email клиента", "почта клиента",
+]
+
 # Дополнительная проверка — глагол + "задачу" в любом порядке
 def _has_task_intent(text: str) -> bool:
     t = text.lower()
@@ -87,6 +98,10 @@ def is_amo_request(text: str) -> bool:
     if any(tr in t for tr in NOTE_TRIGGERS):
         return True
     if any(tr in t for tr in CREATE_TRIGGERS):
+        return True
+    if any(tr in t for tr in MYTASKS_TRIGGERS):
+        return True
+    if any(tr in t for tr in CONTACT_SEARCH_TRIGGERS):
         return True
     return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS)
 
@@ -579,6 +594,14 @@ async def handle_amo_request(message: Message, user_text: str):
     # Создание задачи
     elif _has_task_intent(user_text):
         await handle_task_create(message, user_text)
+
+    # Мои задачи
+    elif any(tr in text_lower for tr in MYTASKS_TRIGGERS):
+        await handle_mytasks(message)
+
+    # Поиск контакта
+    elif any(tr in text_lower for tr in CONTACT_SEARCH_TRIGGERS):
+        await handle_contact_search_full(message, user_text)
 
     # Создание сделки
     elif any(tr in text_lower for tr in CREATE_TRIGGERS):
