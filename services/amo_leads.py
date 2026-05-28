@@ -33,10 +33,20 @@ FIELD_IDS = {
 # ─── Распознавание номера сделки ─────────────────────────────────────────────
 
 # Паттерн: число + суффикс типа
+# Единицы измерения и стоп-слова — не считаем их номерами сделок
+_UNIT_SUFFIXES = {
+    "шт", "кг", "гр", "мм", "см", "км", "м", "л", "мл",
+    "м2", "м3", "куб", "уп", "пар", "рул", "шт",
+}
+
 DEAL_NUMBER_PATTERN = re.compile(
     r'\b(\d{1,4})([А-ЯЁа-яё]{1,4})\b',
     re.UNICODE
 )
+
+def _is_unit_match(number: str, suffix: str) -> bool:
+    """Возвращает True если это единица измерения, а не номер сделки."""
+    return suffix.lower() in _UNIT_SUFFIXES
 
 DEAL_TYPE_NAMES = {
     'к':    'Карго (сборный)',
@@ -71,20 +81,22 @@ def parse_deal_number(text: str) -> Optional[dict]:
     Возвращает {'number': '64', 'type': 'к', 'full': '64К', 'search_query': '64К'}
     или None если не найдено.
     """
-    match = DEAL_NUMBER_PATTERN.search(text)
-    if not match:
-        return None
-    number = match.group(1)
-    deal_type = match.group(2).lower()
-    full = f"{number}{match.group(2).upper()}"
-    return {
-        'number': number,
-        'type': deal_type,
-        'full': full,
-        'type_name': DEAL_TYPE_NAMES.get(deal_type, deal_type),
-        'emoji': DEAL_TYPE_EMOJI.get(deal_type, '📋'),
-        'search_query': full,
-    }
+    for match in DEAL_NUMBER_PATTERN.finditer(text):
+        number = match.group(1)
+        deal_type = match.group(2).lower()
+        if _is_unit_match(number, deal_type):
+            continue
+        full = f"{number}{match.group(2).upper()}"
+        return {
+            'number': number,
+            'type': deal_type,
+            'full': full,
+            'type_name': DEAL_TYPE_NAMES.get(deal_type, deal_type),
+            'emoji': DEAL_TYPE_EMOJI.get(deal_type, '📋'),
+            'search_query': full,
+        }
+    return None
+
 
 
 def is_deal_number_request(text: str) -> bool:
