@@ -517,13 +517,13 @@ async def handle_lead_create(message: Message, raw_text: str):
         await message.answer("\n".join(lines), parse_mode="HTML")
 
         responsible_id = get_amo_user_id(message.from_user.id)
-        result = await create_lead_from_parsed(parsed, responsible_user_id=responsible_id)
+        result = await create_lead_from_parsed(parsed, responsible_user_id=responsible_id, raw_text=raw_text)
 
         if result.get("id"):
             await message.answer(
                 f"✅ <b>Сделка создана!</b>\n\n"
                 f"📋 {result['name']}\n"
-                f"📊 Контракт Клиента → Новая заявка\n"
+                f"📊 {result.get('pipeline_label', 'Контракт Клиента → Новая заявка')}\n"
                 f"🔗 <a href='https://{_amo_domain}/leads/detail/{result['id']}'>Открыть в AmoCRM</a>",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
