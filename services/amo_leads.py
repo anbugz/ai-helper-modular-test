@@ -133,14 +133,19 @@ def extract_custom_fields(lead: dict) -> dict:
 
 # ─── Форматирование карточки сделки ──────────────────────────────────────────
 
-def format_lead_card(lead: dict, pipelines: dict, users: dict) -> str:
-    """Форматирует полную карточку сделки для Telegram."""
+def format_lead_card(lead: dict, pipelines: dict, users: dict, viewer_amo_id: int = None) -> str:
+    """Форматирует полную карточку сделки для Telegram.
+    viewer_amo_id — AmoCRM ID смотрящего. Если указан и сделка чужая — скрываем контакты и задачи.
+    """
     name = lead.get('name', '—')
     lead_id = lead.get('id', '')
     pipeline_id = lead.get('pipeline_id', 0)
     status_id = lead.get('status_id', 0)
     responsible_id = lead.get('responsible_user_id', 0)
     price = lead.get('price', 0)
+
+    # Проверяем является ли смотрящий ответственным за сделку
+    is_owner = (viewer_amo_id is None) or (viewer_amo_id == responsible_id)
 
     pipeline = pipelines.get(pipeline_id, {})
     pipeline_name = pipeline.get('name', '—')
@@ -207,22 +212,26 @@ def format_lead_card(lead: dict, pipelines: dict, users: dict) -> str:
     if cf.get('gtd_number'):
         lines.append(f"🔖 ГТД: {cf['gtd_number']}")
 
-    # Текущие задачи из AmoCRM (передаются отдельно)
+    # Текущие задачи из AmoCRM (только для ответственного)
     active_tasks = lead.get("_active_tasks", [])
-    if active_tasks:
+    if active_tasks and is_owner:
         lines.append("")
         lines.append("📋 <b>Текущие задачи:</b>")
         for t in active_tasks[:5]:
             due_str = f" — {t['due']}" if t.get("due") else ""
             lines.append(f"  • {t.get('text', '—')[:80]}{due_str}")
-
-    # Рекомендации по этапу
-    checklist = get_stage_checklist(status_name, cf, deal_info)
-    if checklist:
+    elif active_tasks and not is_owner:
         lines.append("")
-        lines.append("💡 <b>Рекомендации:</b>")
-        for item in checklist:
-            lines.append(f"  • {item}")
+        lines.append(f"📋 Задач по сделке: {len(active_tasks)} (доступно только ответственному)")
+
+    # Рекомендации по этапу (только для ответственного)
+    if is_owner:
+        checklist = get_stage_checklist(status_name, cf, deal_info)
+        if checklist:
+            lines.append("")
+            lines.append("💡 <b>Рекомендации:</b>")
+            for item in checklist:
+                lines.append(f"  • {item}")
 
 
 
