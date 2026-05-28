@@ -58,6 +58,12 @@ NOTE_TRIGGERS = [
     "заметка по", "прокомментируй сделку", "добавь комментарий",
 ]
 
+CREATE_TRIGGERS = [
+    "создай сделку", "создать сделку", "новая сделка", "новая заявка",
+    "добавь сделку", "добавить сделку", "заведи сделку", "завести сделку",
+    "создай заявку", "создать заявку", "добавь заявку",
+]
+
 # Дополнительная проверка — глагол + "задачу" в любом порядке
 def _has_task_intent(text: str) -> bool:
     t = text.lower()
@@ -79,6 +85,8 @@ def is_amo_request(text: str) -> bool:
     if _has_task_intent(text):
         return True
     if any(tr in t for tr in NOTE_TRIGGERS):
+        return True
+    if any(tr in t for tr in CREATE_TRIGGERS):
         return True
     return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS)
 
@@ -464,6 +472,78 @@ async def handle_note_add(message: Message, raw_text: str):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
+# ─── Создание сделки ────────────────────────────────────────────────────────
+
+async def handle_lead_create(message: Message, raw_text: str):
+    """Создаёт сделку в AmoCRM из текста (заявка, письмо, голос)."""
+    from services.amo_create import parse_lead_from_text, create_lead_from_parsed
+    from services.amocrm import get_amo_user_id
+
+    await message.answer("⏳ Анализирую заявку...")
+    try:
+        parsed = await parse_lead_from_text(raw_text)
+        if not parsed:
+            await message.answer("❌ Не удалось распознать данные заявки.")
+            return
+
+        # Показываем что распознали — просим подтвердить
+        lines = ["📋 <b>Распознал следующие данные:</b>
+"]
+        if parsed.get("deal_name"):
+            lines.append(f"📦 Название: <b>{parsed['deal_name']}</b>")
+        if parsed.get("name"):
+            lines.append(f"👤 Контакт: {parsed['name']}")
+        if parsed.get("phone"):
+            lines.append(f"📞 Телефон: {parsed['phone']}")
+        if parsed.get("email"):
+            lines.append(f"📧 Email: {parsed['email']}")
+        if parsed.get("company"):
+            lines.append(f"🏢 Компания: {parsed['company']}")
+        if parsed.get("cargo_desc"):
+            lines.append(f"📝 Груз: {parsed['cargo_desc'][:100]}")
+        if parsed.get("weight_kg"):
+            lines.append(f"⚖️ Вес: {parsed['weight_kg']} кг")
+        if parsed.get("volume_m3"):
+            lines.append(f"📐 Объём: {parsed['volume_m3']} м³")
+        if parsed.get("origin"):
+            lines.append(f"🛫 Откуда: {parsed['origin']}")
+        if parsed.get("destination"):
+            lines.append(f"🛬 Куда: {parsed['destination']}")
+        if parsed.get("transport_type"):
+            lines.append(f"🚚 Тип: {parsed['transport_type']}")
+        if parsed.get("notes"):
+            lines.append(f"💬 Доп. инфо: {parsed['notes'][:100]}")
+
+        lines.append("
+<i>Создаю сделку в AmoCRM...</i>")
+        await message.answer("
+".join(lines), parse_mode="HTML")
+
+        responsible_id = get_amo_user_id(message.from_user.id)
+        result = await create_lead_from_parsed(parsed, responsible_user_id=responsible_id)
+
+        if result.get("id"):
+            from datetime import datetime
+            today = datetime.now().strftime("%d.%m.%Y")
+            await message.answer(
+                f"✅ <b>Сделка создана!</b>
+
+"
+                f"📋 {result['name']}
+"
+                f"📊 Контракт Клиента → Новая заявка
+"
+                f"🔗 <a href='https://{_amo_domain}/leads/detail/{result['id']}'>Открыть в AmoCRM</a>",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            await message.answer("❌ Не удалось создать сделку в AmoCRM.")
+    except Exception as e:
+        logger.error(f"Lead create error: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
+
+
 # ─── Callback кнопок напоминаний ─────────────────────────────────────────────
 
 from aiogram import F as AiogramF
@@ -514,6 +594,10 @@ async def handle_amo_request(message: Message, user_text: str):
     # Создание задачи
     elif _has_task_intent(user_text):
         await handle_task_create(message, user_text)
+
+    # Создание сделки
+    elif any(tr in text_lower for tr in CREATE_TRIGGERS):
+        await handle_lead_create(message, user_text)
 
     # Примечание к сделке
     elif any(tr in text_lower for tr in NOTE_TRIGGERS):
