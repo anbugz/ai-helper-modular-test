@@ -11,9 +11,18 @@ from datetime import datetime
 from config import logger
 from services.amocrm import _async_request, get_amo_user_id
 
-# Воронка и этап по умолчанию для новых сделок
-DEFAULT_PIPELINE_ID = 10909302   # Контракт Клиента
-DEFAULT_STATUS_ID   = 85806450   # Новая заявка
+# Воронки и этапы
+DEFAULT_PIPELINE_ID    = 10909302   # Контракт Клиента
+DEFAULT_STATUS_ID      = 85806450   # Новая заявка
+
+WA_PIPELINE_ID         = 10909306   # Контракт West Asia
+WA_STATUS_ID           = 85807290   # ЗАПРОС
+
+# Триггеры для воронки West Asia
+WA_TRIGGERS = [
+    "наш контракт", "наш договор", "west asia", "вест азия",
+    "westasia", "наша воронка", "наш контрагент",
+]
 
 # ID кастомных полей контакта
 CONTACT_FIELD_PHONE = 578354
@@ -125,11 +134,22 @@ async def find_or_create_contact(name: str = None, phone: str = None, email: str
     return None
 
 
-async def create_lead_from_parsed(parsed: dict, responsible_user_id: int = None) -> dict:
+async def create_lead_from_parsed(parsed: dict, responsible_user_id: int = None, raw_text: str = "") -> dict:
     """Создаёт сделку в AmoCRM из распарсенных данных."""
     today = datetime.now().strftime("%d.%m.%Y")
     deal_name = parsed.get("deal_name") or "Новая заявка"
     lead_name = f"{deal_name} {today}"
+
+    # Определяем воронку по тексту запроса
+    raw_lower = raw_text.lower()
+    if any(tr in raw_lower for tr in WA_TRIGGERS):
+        pipeline_id = WA_PIPELINE_ID
+        status_id   = WA_STATUS_ID
+        pipeline_label = "Контракт West Asia → ЗАПРОС"
+    else:
+        pipeline_id = DEFAULT_PIPELINE_ID
+        status_id   = DEFAULT_STATUS_ID
+        pipeline_label = "Контракт Клиента → Новая заявка"
 
     # Кастомные поля сделки
     custom_fields = []
@@ -146,8 +166,8 @@ async def create_lead_from_parsed(parsed: dict, responsible_user_id: int = None)
 
     lead = {
         "name": lead_name,
-        "pipeline_id": DEFAULT_PIPELINE_ID,
-        "status_id": DEFAULT_STATUS_ID,
+        "pipeline_id": pipeline_id,
+        "status_id": status_id,
         "_embedded": {},
     }
     if responsible_user_id:
@@ -182,4 +202,4 @@ async def create_lead_from_parsed(parsed: dict, responsible_user_id: int = None)
         from services.amocrm import add_note
         await add_note(entity_id=lead_id, text=notes_text.strip())
 
-    return {"id": lead_id, "name": lead_name, "contact_id": contact_id}
+    return {"id": lead_id, "name": lead_name, "contact_id": contact_id, "pipeline_label": pipeline_label}
