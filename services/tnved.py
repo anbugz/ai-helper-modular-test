@@ -147,9 +147,13 @@ def is_radio_electronics(code: str) -> bool:
 def extract_tnved_codes(text: str) -> List[str]:
     """Извлекает коды ТН ВЭД (8-10 цифр) из текста, включая с пробелами (5208 43 000 0).
     Не считает кодом число, за которым сразу идёт валютный суффикс (р, ю, дол, евр и т.д.).
+    Не считает кодом телефонный номер (+7, 8 перед числом).
     """
+    # Убираем телефонные номера до нормализации
+    cleaned = re.sub(r'(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}', ' ', text)
+    cleaned = re.sub(r'(?:\+7|8)\d{10}', ' ', cleaned)
     # Нормализуем: убираем пробелы между цифрами
-    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
+    normalized = re.sub(r'(\d)\s+(?=\d)', r'\1', cleaned)
     # Ищем 8-10 значные числа НЕ followed by валютный суффикс
     currency_suffix = r'(?!\s*(?:р(?:уб)?|ю(?:ан)?|дол|евр|usd|cny|eur|rub|\$|€|¥|₽))'
     return re.findall(rf'\d{{8,10}}{currency_suffix}', normalized, re.IGNORECASE)
