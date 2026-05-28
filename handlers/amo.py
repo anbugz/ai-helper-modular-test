@@ -188,13 +188,13 @@ async def handle_mytasks(message: Message):
 
     parts = []
     if overdue:
-        parts.append(f"🔴 <b>Просроченные: {len(overdue)}</b>{fmt(overdue, _domain)}")
+        parts.append(f"🔴 <b>Просроченные: {len(overdue)}</b>\n{fmt(overdue, _domain)}")
     if today_tasks:
-        parts.append(f"🟡 <b>Сегодня: {len(today_tasks)}</b>{fmt(today_tasks, _domain)}")
+        parts.append(f"🟡 <b>Сегодня: {len(today_tasks)}</b>\n{fmt(today_tasks, _domain)}")
     if tomorrow_tasks:
-        parts.append(f"🔵 <b>Завтра: {len(tomorrow_tasks)}</b>{fmt(tomorrow_tasks, _domain)}")
+        parts.append(f"🔵 <b>Завтра: {len(tomorrow_tasks)}</b>\n{fmt(tomorrow_tasks, _domain)}")
     if later_tasks:
-        parts.append(f"⚪ <b>Позже: {len(later_tasks)}</b>{fmt(later_tasks, _domain)}")
+        parts.append(f"⚪ <b>Позже: {len(later_tasks)}</b>\n{fmt(later_tasks, _domain)}")
 
     await message.answer(
         f"📋 <b>Твои задачи ({len(tasks)}):</b>\n\n" + "\n\n".join(parts),
