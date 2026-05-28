@@ -77,6 +77,16 @@ def init_db() -> None:
             loaded_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_tnved_name ON tnved_cache(name);
+        CREATE TABLE IF NOT EXISTS scheduled_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER UNIQUE,
+            chat_id INTEGER NOT NULL,
+            task_text TEXT NOT NULL,
+            deal_name TEXT DEFAULT '',
+            due_ts INTEGER NOT NULL,
+            explicit_time INTEGER DEFAULT 0,
+            created_at TEXT
+        );
     """)
     # Миграция: добавляем колонки если их нет (для существующих БД)
     for col, definition in [
@@ -910,3 +920,54 @@ def clear_knowledge_base() -> int:
     conn.commit()
     conn.close()
     return deleted
+
+
+# ------------------------------------------------------------------
+# Scheduled reminders
+# ------------------------------------------------------------------
+
+def save_reminder(task_id: int, chat_id: int, task_text: str, deal_name: str,
+                  due_ts: int, explicit_time: bool) -> None:
+    """Сохраняет напоминание в БД."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO scheduled_reminders
+            (task_id, chat_id, task_text, deal_name, due_ts, explicit_time, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (task_id, chat_id, task_text, deal_name, due_ts,
+              1 if explicit_time else 0, datetime.now().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_reminder(task_id: int) -> None:
+    """Удаляет напоминание из БД."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("DELETE FROM scheduled_reminders WHERE task_id = ?", (task_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_pending_reminders() -> list:
+    """Загружает все будущие напоминания из БД."""
+    import time
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute("""
+            SELECT task_id, chat_id, task_text, deal_name, due_ts, explicit_time
+            FROM scheduled_reminders
+            WHERE due_ts > ?
+        """, (int(time.time()),)).fetchall()
+        return [
+            {
+                "task_id": r[0], "chat_id": r[1], "task_text": r[2],
+                "deal_name": r[3], "due_ts": r[4], "explicit_time": bool(r[5]),
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
