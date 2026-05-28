@@ -484,7 +484,7 @@ async def handle_amo_request(message: Message, user_text: str):
 
     # Номер сделки (64К, 73М, 82ЖД, 91А, 107Авто)
     deal = parse_deal_number(user_text)
-    if deal and not _has_task_intent(user_text) and not any(tr in text_lower for tr in CONTACT_TRIGGERS):
+    if deal and not _has_task_intent(user_text) and not any(tr in text_lower for tr in CONTACT_TRIGGERS) and not any(tr in text_lower for tr in NOTE_TRIGGERS):
         await handle_deal_number_search(message, deal)
         return
 
