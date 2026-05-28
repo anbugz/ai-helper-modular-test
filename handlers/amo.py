@@ -111,6 +111,124 @@ def is_amo_request(text: str) -> bool:
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
 
 
+async def handle_mytasks(message: Message):
+    """Показывает все незакрытые задачи пользователя."""
+    from services.amocrm import get_amo_user_id, _async_request
+    from datetime import datetime, timedelta
+
+    responsible_id = get_amo_user_id(message.from_user.id)
+    params = {"filter[is_completed]": 0, "limit": 50}
+    if responsible_id:
+        params["filter[responsible_user_id][]"] = responsible_id
+
+    resp = await _async_request("GET", "/tasks", params=params)
+    tasks = resp.get("_embedded", {}).get("tasks", [])
+
+    if not tasks:
+        await message.answer("✅ Нет открытых задач!")
+        return
+
+    now = datetime.now()
+    today_end = now.replace(hour=23, minute=59, second=59)
+    tomorrow_end = today_end + timedelta(days=1)
+    overdue, today_tasks, tomorrow_tasks, later_tasks = [], [], [], []
+
+    for t in tasks:
+        due_ts = t.get("complete_till", 0)
+        due_dt = datetime.fromtimestamp(due_ts) if due_ts else None
+        entity_id = t.get("entity_id")
+        lead_name = ""
+        if entity_id and t.get("entity_type") == "leads":
+            lr = await _async_request("GET", f"/leads/{entity_id}")
+            lead_name = lr.get("name", "")
+        item = {
+            "text": t.get("text", "—"),
+            "due": due_dt.strftime("%d.%m %H:%M") if due_dt else "—",
+            "lead": lead_name,
+        }
+        if not due_dt:
+            later_tasks.append(item)
+        elif due_dt < now:
+            overdue.append(item)
+        elif due_dt <= today_end:
+            today_tasks.append(item)
+        elif due_dt <= tomorrow_end:
+            tomorrow_tasks.append(item)
+        else:
+            later_tasks.append(item)
+
+    def fmt(items):
+        lines = []
+        for t in items[:10]:
+            lead_str = f" <i>({t['lead'][:40]})</i>" if t["lead"] else ""
+            lines.append(f"  • {t['text'][:60]}{lead_str}\n    🕐 {t['due']}")
+        return "\n".join(lines)
+
+    parts = []
+    if overdue:
+        parts.append(f"🔴 <b>Просроченные: {len(overdue)}</b>\n{fmt(overdue)}")
+    if today_tasks:
+        parts.append(f"🟡 <b>Сегодня: {len(today_tasks)}</b>\n{fmt(today_tasks)}")
+    if tomorrow_tasks:
+        parts.append(f"🔵 <b>Завтра: {len(tomorrow_tasks)}</b>\n{fmt(tomorrow_tasks)}")
+    if later_tasks:
+        parts.append(f"⚪ <b>Позже: {len(later_tasks)}</b>\n{fmt(later_tasks)}")
+
+    await message.answer(
+        f"📋 <b>Твои задачи ({len(tasks)}):</b>\n\n" + "\n\n".join(parts),
+        parse_mode="HTML"
+    )
+
+
+async def handle_contact_search_full(message: Message, raw_text: str):
+    """Ищет контакт по имени/телефону/email и показывает его сделки."""
+    from services.amocrm import _async_request, get_pipelines, get_users
+
+    query = raw_text
+    for tr in CONTACT_SEARCH_TRIGGERS:
+        query = re.sub(tr, "", query, flags=re.IGNORECASE).strip()
+    query = query.strip(" :,-")
+
+    if not query:
+        await message.answer("Укажи имя или телефон. Пример: «найди контакт Антон Костюк»")
+        return
+
+    await message.answer(f"🔍 Ищу контакт: {query}...")
+    resp = await _async_request("GET", "/contacts", params={
+        "query": query, "limit": 3, "with": "leads,custom_fields",
+    })
+    contacts = resp.get("_embedded", {}).get("contacts", [])
+
+    if not contacts:
+        await message.answer(f"❌ Контакт <b>{query}</b> не найден.", parse_mode="HTML")
+        return
+
+    pipelines = await get_pipelines()
+
+    for c in contacts:
+        lines = [f"👤 <b>{c.get('name', '—')}</b>\n"]
+        for f in c.get("custom_fields_values", []) or []:
+            fid = f.get("field_id")
+            vals = [v.get("value", "") for v in f.get("values", [])]
+            val_str = ", ".join(filter(None, vals))
+            if fid == 578354:
+                lines.append(f"📞 {val_str}")
+            elif fid == 578356:
+                lines.append(f"📧 {val_str}")
+        lead_ids = [l["id"] for l in c.get("_embedded", {}).get("leads", [])]
+        if lead_ids:
+            lines.append(f"\n📋 <b>Сделки ({len(lead_ids)}):</b>")
+            for lid in lead_ids[:5]:
+                lr = await _async_request("GET", f"/leads/{lid}")
+                if lr.get("id"):
+                    pipeline_id = lr.get("pipeline_id", 0)
+                    status_id = lr.get("status_id", 0)
+                    pipeline = pipelines.get(pipeline_id, {})
+                    status = pipeline.get("statuses", {}).get(status_id, "—")
+                    lines.append(f"  • <b>{lr.get('name','—')}</b> — {pipeline.get('name','—')} → {status}")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+
 @router.message(Command("tasks"))
 async def cmd_tasks(message: Message):
     await handle_mytasks(message)
