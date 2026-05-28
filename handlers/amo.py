@@ -110,6 +110,11 @@ def is_amo_request(text: str) -> bool:
 
 # ─── Поиск сделок ─────────────────────────────────────────────────────────────
 
+
+@router.message(Command("tasks"))
+async def cmd_tasks(message: Message):
+    await handle_mytasks(message)
+
 async def handle_deal_number_search(message: Message, deal: dict):
     """Поиск сделки по номеру (64К, 73М и т.д.)."""
     await message.answer(f"🔍 Ищу сделку {deal['full']}...")
@@ -557,10 +562,6 @@ async def callback_task_action(callback: CallbackQuery):
     from bot_instance import bot
     await handle_task_callback(callback, bot)
 
-
-@router.message(Command("tasks"))
-async def cmd_tasks(message: Message):
-    await handle_mytasks(message)
 
 
 # ─── Главная точка входа (вызывается из text.py) ─────────────────────────────
