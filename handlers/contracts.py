@@ -387,6 +387,8 @@ def fill_contract(template_stream: io.BytesIO, data: dict, manager: dict, contra
         dates = get_current_date()
         context = {
             **dates,
+            'Дата': dates['date_full'],  # {{ Дата }} → «28» мая 2026 г.
+            'date': dates['date_digital'],  # {{ date }} → 28.05.2026
             'company_name':          data.get('company_name', '___________'),
             'company_name_short':    data.get('company_name_short', '___________'),
             'company_name_genitive': data.get('company_name_genitive', '___________'),
