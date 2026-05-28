@@ -23,7 +23,7 @@ from services.amocrm import (
     search_contacts, search_companies,
     create_task, add_note,
     get_overdue_tasks, get_stale_leads,
-    get_users,
+    get_users, get_lead_tasks,
 )
 
 router = Router()
@@ -97,9 +97,10 @@ async def handle_deal_number_search(message: Message, deal: dict):
         if len(leads) == 1:
             full = await _async_request(
                 "GET", f"/leads/{leads[0]['id']}",
-                params={"with": "contacts,custom_fields,tasks"}
+                params={"with": "contacts,custom_fields"}
             )
             if full.get("id"):
+                full["_active_tasks"] = await get_lead_tasks(full["id"])
                 text = format_lead_card(full, pipelines, users)
                 await message.answer(text, parse_mode="HTML")
                 return
@@ -130,8 +131,9 @@ async def handle_lead_search(message: Message, query: str):
 
         # Одна сделка — полная карточка с чеклистом
         if len(leads) == 1:
-            full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields,tasks"})
+            full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields"})
             if full.get("id"):
+                full["_active_tasks"] = await get_lead_tasks(full["id"])
                 text = format_lead_card(full, pipelines, users)
                 await message.answer(text, parse_mode="HTML")
                 return
