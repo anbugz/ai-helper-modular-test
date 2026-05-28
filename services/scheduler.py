@@ -186,13 +186,25 @@ async def handle_task_callback(callback, bot):
             current_till = resp.get("complete_till", 0)
             new_till = current_till + days * 86400
             await _async_request("PATCH", f"/tasks/{task_id}", data={"complete_till": new_till})
-            new_dt = datetime.fromtimestamp(new_till).strftime("%d.%m.%Y %H:%M")
+            new_dt_obj = datetime.fromtimestamp(new_till)
+            new_dt_str = new_dt_obj.strftime("%d.%m.%Y %H:%M")
             await callback.message.edit_text(
-                callback.message.text + f"\n\n📅 <b>Перенесено на {new_dt}</b>",
+                callback.message.text + f"\n\n📅 <b>Перенесено на {new_dt_str}</b>",
                 parse_mode="HTML",
                 reply_markup=None,
             )
             await callback.answer(f"Перенесено на {days} дн. ✅")
+            # Планируем новое напоминание за 30 минут до нового срока
+            task_text = resp.get("text", "Задача")
+            schedule_reminder(
+                bot=bot,
+                chat_id=callback.message.chat.id,
+                task_id=task_id,
+                task_text=task_text,
+                deal_name="",
+                due_dt=new_dt_obj,
+                explicit_time=False,
+            )
 
     except Exception as e:
         logger.error(f"Scheduler callback error: {e}")
