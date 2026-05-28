@@ -476,8 +476,10 @@ async def handle_note_add(message: Message, raw_text: str):
 
 async def handle_lead_create(message: Message, raw_text: str):
     """Создаёт сделку в AmoCRM из текста (заявка, письмо, голос)."""
+    import os as _os
     from services.amo_create import parse_lead_from_text, create_lead_from_parsed
     from services.amocrm import get_amo_user_id
+    _amo_domain = _os.getenv("AMO_DOMAIN", "westasia.amocrm.ru")
 
     await message.answer("⏳ Анализирую заявку...")
     try:
@@ -486,9 +488,7 @@ async def handle_lead_create(message: Message, raw_text: str):
             await message.answer("❌ Не удалось распознать данные заявки.")
             return
 
-        # Показываем что распознали — просим подтвердить
-        lines = ["📋 <b>Распознал следующие данные:</b>
-"]
+        lines = ["📋 <b>Распознал следующие данные:</b>\n"]
         if parsed.get("deal_name"):
             lines.append(f"📦 Название: <b>{parsed['deal_name']}</b>")
         if parsed.get("name"):
@@ -513,26 +513,17 @@ async def handle_lead_create(message: Message, raw_text: str):
             lines.append(f"🚚 Тип: {parsed['transport_type']}")
         if parsed.get("notes"):
             lines.append(f"💬 Доп. инфо: {parsed['notes'][:100]}")
-
-        lines.append("
-<i>Создаю сделку в AmoCRM...</i>")
-        await message.answer("
-".join(lines), parse_mode="HTML")
+        lines.append("\n<i>Создаю сделку в AmoCRM...</i>")
+        await message.answer("\n".join(lines), parse_mode="HTML")
 
         responsible_id = get_amo_user_id(message.from_user.id)
         result = await create_lead_from_parsed(parsed, responsible_user_id=responsible_id)
 
         if result.get("id"):
-            from datetime import datetime
-            today = datetime.now().strftime("%d.%m.%Y")
             await message.answer(
-                f"✅ <b>Сделка создана!</b>
-
-"
-                f"📋 {result['name']}
-"
-                f"📊 Контракт Клиента → Новая заявка
-"
+                f"✅ <b>Сделка создана!</b>\n\n"
+                f"📋 {result['name']}\n"
+                f"📊 Контракт Клиента → Новая заявка\n"
                 f"🔗 <a href='https://{_amo_domain}/leads/detail/{result['id']}'>Открыть в AmoCRM</a>",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
@@ -544,12 +535,6 @@ async def handle_lead_create(message: Message, raw_text: str):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
-# ─── Callback кнопок напоминаний ─────────────────────────────────────────────
-
-from aiogram import F as AiogramF
-from aiogram.types import CallbackQuery
-
-@router.callback_query(AiogramF.data.startswith("task_done:") | AiogramF.data.startswith("task_postpone:"))
 async def callback_task_action(callback: CallbackQuery):
     from services.scheduler import handle_task_callback
     from bot_instance import bot
