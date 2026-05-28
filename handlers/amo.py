@@ -52,6 +52,12 @@ TASK_TRIGGERS = [
     "задач перезвон", "задач позвон", "задач провер",
 ]
 
+NOTE_TRIGGERS = [
+    "добавь примечание", "добавить примечание", "запиши примечание",
+    "примечание по", "примечание к", "добавь заметку", "запиши заметку",
+    "заметка по", "прокомментируй сделку", "добавь комментарий",
+]
+
 # Дополнительная проверка — глагол + "задачу" в любом порядке
 def _has_task_intent(text: str) -> bool:
     t = text.lower()
@@ -71,6 +77,8 @@ def is_amo_request(text: str) -> bool:
     if is_deal_number_request(text):
         return True
     if _has_task_intent(text):
+        return True
+    if any(tr in t for tr in NOTE_TRIGGERS):
         return True
     return any(tr in t for tr in LEAD_TRIGGERS + CONTACT_TRIGGERS)
 
@@ -100,7 +108,6 @@ async def handle_deal_number_search(message: Message, deal: dict):
                 params={"with": "contacts,custom_fields"}
             )
             if full.get("id"):
-                full["_active_tasks"] = await get_lead_tasks(full["id"])
                 text = format_lead_card(full, pipelines, users)
                 await message.answer(text, parse_mode="HTML")
                 return
@@ -133,7 +140,6 @@ async def handle_lead_search(message: Message, query: str):
         if len(leads) == 1:
             full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields"})
             if full.get("id"):
-                full["_active_tasks"] = await get_lead_tasks(full["id"])
                 text = format_lead_card(full, pipelines, users)
                 await message.answer(text, parse_mode="HTML")
                 return
@@ -186,11 +192,13 @@ async def handle_contact_search(message: Message, query: str):
 
 def parse_task_datetime(text: str) -> tuple:
     """Парсит дату/время и номер сделки из текста задачи.
-    Возвращает (текст_задачи, datetime, deal_info_or_None)
+    Возвращает (текст_задачи, datetime, deal_info_or_None, explicit_time: bool)
+    explicit_time=True если пользователь назвал конкретное время или «через N минут/часов»
     """
     from services.amo_leads import parse_deal_number
     now = datetime.now()
     due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+    explicit_time = False  # по умолчанию — долгосрочная, напоминать за 30 мин
 
     for tr in TASK_TRIGGERS:
         text = re.sub(tr, "", text, flags=re.IGNORECASE).strip()
@@ -203,6 +211,7 @@ def parse_task_datetime(text: str) -> tuple:
     # Ищем время: "в 15:30", "в 10"
     time_match = re.search(r"в\s+(\d{1,2})(?:[:\-](\d{2})|\s([0-5]\d)(?=\s|\$))?", text)
     if time_match:
+        explicit_time = True
         text = text[:time_match.start()] + text[time_match.end():]
 
     # Ищем день
@@ -226,8 +235,10 @@ def parse_task_datetime(text: str) -> tuple:
         unit = single_match.group(1).lower()
         if unit in ("минуту", "минутку"):
             due = now + timedelta(minutes=1)
+            explicit_time = True
         elif unit == "час":
             due = now + timedelta(hours=1)
+            explicit_time = True
         elif unit == "день":
             due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
         elif unit == "неделю":
@@ -247,8 +258,10 @@ def parse_task_datetime(text: str) -> tuple:
         unit = time_delta_match.group(2).lower()
         if unit.startswith("мин"):
             due = now + timedelta(minutes=n)
+            explicit_time = True
         elif unit.startswith("час") or unit == "ч":
             due = now + timedelta(hours=n)
+            explicit_time = True
         elif unit.startswith("недел"):
             due = now + timedelta(weeks=n)
         else:
@@ -265,7 +278,7 @@ def parse_task_datetime(text: str) -> tuple:
 
     text = re.sub(r"^(по|для|к)\s+", "", text.strip(), flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip(" ,.")
-    return text or "Задача из Telegram", due, deal_info
+    return text or "Задача из Telegram", due, deal_info, explicit_time
 
 
 async def _remind_later(chat_id: int, task_text: str, deal_name: str, delay: float):
@@ -285,10 +298,12 @@ async def _remind_later(chat_id: int, task_text: str, deal_name: str, delay: flo
 
 async def handle_task_create(message: Message, raw_text: str):
     """Создаёт задачу в AmoCRM. Если есть номер сделки — привязывает."""
-    task_text, due_dt, deal_info = parse_task_datetime(raw_text)
+    task_text, due_dt, deal_info, explicit_time = parse_task_datetime(raw_text)
     await message.answer("⏳ Создаю задачу в AmoCRM...")
     try:
         from services.amocrm import get_amo_user_id, search_leads_by_number
+        from services.scheduler import schedule_reminder
+        from bot_instance import bot
         responsible_id = get_amo_user_id(message.from_user.id)
         entity_id = None
         deal_name = ""
@@ -313,19 +328,26 @@ async def handle_task_create(message: Message, raw_text: str):
         if task.get("id"):
             due_str = due_dt.strftime("%d.%m.%Y в %H:%M")
             deal_str = f"\n🔗 Сделка: <b>{deal_name}</b>" if deal_name else ""
+            remind_note = "⏰ Напомню за 30 минут до срока" if not explicit_time else f"⏰ Напомню в {due_dt.strftime('%H:%M')}"
             await message.answer(
                 f"✅ <b>Задача создана</b>\n\n"
                 f"📝 {task_text}\n"
                 f"🕐 Срок: {due_str}"
                 f"{deal_str}\n"
-                f"🆔 ID: {task['id']}",
+                f"🆔 ID: {task['id']}\n"
+                f"<i>{remind_note}</i>",
                 parse_mode="HTML"
             )
-            # Если срок меньше часа — ставим напоминание в Telegram
-            delay = (due_dt - datetime.now()).total_seconds()
-            if 0 < delay <= 3600:
-                asyncio.create_task(
-                    _remind_later(message.chat.id, task_text, deal_name, delay)
+            delay_total = (due_dt - datetime.now()).total_seconds()
+            if delay_total > 0:
+                schedule_reminder(
+                    bot=bot,
+                    chat_id=message.chat.id,
+                    task_id=task["id"],
+                    task_text=task_text,
+                    deal_name=deal_name,
+                    due_dt=due_dt,
+                    explicit_time=explicit_time,
                 )
         else:
             await message.answer("❌ Не удалось создать задачу.")
@@ -333,7 +355,7 @@ async def handle_task_create(message: Message, raw_text: str):
         logger.error(f"Task create error: {e}")
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
-@router.message(Command("overdue"))
+
 async def cmd_overdue(message: Message):
     await message.answer("⏳ Загружаю просроченные задачи...")
     try:
@@ -390,6 +412,70 @@ async def cmd_stale(message: Message):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
+# ─── Примечания к сделке ────────────────────────────────────────────────────
+
+async def handle_note_add(message: Message, raw_text: str):
+    """Добавляет примечание к сделке. Пример: «добавь примечание по 88КЭ: согласовали цену»"""
+    from services.amo_leads import parse_deal_number
+    # Убираем триггер
+    text = raw_text
+    for tr in NOTE_TRIGGERS:
+        import re as _re
+        text = _re.sub(tr, "", text, flags=_re.IGNORECASE).strip()
+
+    # Ищем номер сделки
+    deal_info = parse_deal_number(raw_text)
+    if deal_info:
+        text = text.replace(deal_info["full"], "").strip(" :,-")
+
+    # Текст после двоеточия
+    if ":" in text:
+        text = text.split(":", 1)[1].strip()
+
+    if not text:
+        await message.answer("Укажи текст примечания. Пример: «добавь примечание по 88КЭ: согласовали цену 15000$»")
+        return
+
+    if not deal_info:
+        await message.answer("Укажи номер сделки. Пример: «добавь примечание по 88КЭ: текст»")
+        return
+
+    await message.answer(f"📝 Ищу сделку {deal_info['full']}...")
+    try:
+        from services.amocrm import search_leads_by_number
+        leads = await search_leads_by_number(deal_info["search_query"])
+        if not leads:
+            await message.answer(f"❌ Сделка <b>{deal_info['full']}</b> не найдена.", parse_mode="HTML")
+            return
+
+        lead = leads[0]
+        note = await add_note(entity_id=lead["id"], text=text)
+        if note.get("id"):
+            await message.answer(
+                f"✅ <b>Примечание добавлено</b>\n\n"
+                f"🔗 Сделка: <b>{lead['name']}</b>\n"
+                f"📝 {text}",
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer("❌ Не удалось добавить примечание.")
+    except Exception as e:
+        logger.error(f"Note add error: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
+
+
+# ─── Callback кнопок напоминаний ─────────────────────────────────────────────
+
+from aiogram import F as AiogramF
+from aiogram.types import CallbackQuery
+
+@router.callback_query(AiogramF.data.startswith("task_done:") | AiogramF.data.startswith("task_postpone:"))
+async def callback_task_action(callback: CallbackQuery):
+    from services.scheduler import handle_task_callback
+    from bot_instance import bot
+    await handle_task_callback(callback, bot)
+
+
 # ─── Главная точка входа (вызывается из text.py) ─────────────────────────────
 
 async def handle_amo_request(message: Message, user_text: str):
@@ -429,5 +515,9 @@ async def handle_amo_request(message: Message, user_text: str):
     elif _has_task_intent(user_text):
         await handle_task_create(message, user_text)
 
+    # Примечание к сделке
+    elif any(tr in text_lower for tr in NOTE_TRIGGERS):
+        await handle_note_add(message, user_text)
+
     else:
-        await message.answer("Не понял запрос к CRM. Попробуй: «найди сделку», «реквизиты клиента», «напомни завтра в 10»")
+        await message.answer("Не понял запрос к CRM. Попробуй: «найди сделку», «реквизиты клиента», «напомни завтра в 10», «добавь примечание по 88КЭ: текст»")
