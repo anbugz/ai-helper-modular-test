@@ -11,6 +11,7 @@ import pytz
 
 from config import logger
 from services.amocrm import TG_TO_AMO, get_overdue_tasks, _async_request
+from database import save_reminder, delete_reminder, load_pending_reminders
 
 MSK = pytz.timezone("Europe/Moscow")
 
@@ -118,6 +119,7 @@ async def _send_reminder(bot, chat_id: int, task_id: int, task_text: str, deal_n
         logger.error(f"Scheduler: ошибка напоминания {task_id}: {e}")
     finally:
         _scheduled.pop(task_id, None)
+        delete_reminder(task_id)
 
 
 def schedule_reminder(
@@ -155,6 +157,17 @@ def schedule_reminder(
 
     task = asyncio.create_task(_run())
     _scheduled[task_id] = task
+
+    # Сохраняем в БД для восстановления после перезапуска
+    save_reminder(
+        task_id=task_id,
+        chat_id=chat_id,
+        task_text=task_text,
+        deal_name=deal_name,
+        due_ts=int(due_dt.timestamp()),
+        explicit_time=explicit_time,
+    )
+
     mode = "точно в срок" if explicit_time else "за 30 мин"
     logger.info(f"Scheduler: напоминание task_id={task_id} запланировано {mode}, через {delay/60:.1f} мин")
 
@@ -211,7 +224,28 @@ async def handle_task_callback(callback, bot):
         await callback.answer("Ошибка, попробуй ещё раз")
 
 
+async def restore_reminders(bot):
+    """Восстанавливает напоминания из БД после перезапуска."""
+    from datetime import datetime
+    pending = load_pending_reminders()
+    if not pending:
+        return
+    logger.info(f"Scheduler: восстанавливаем {len(pending)} напоминаний из БД")
+    for r in pending:
+        due_dt = datetime.fromtimestamp(r["due_ts"])
+        schedule_reminder(
+            bot=bot,
+            chat_id=r["chat_id"],
+            task_id=r["task_id"],
+            task_text=r["task_text"],
+            deal_name=r["deal_name"],
+            due_dt=due_dt,
+            explicit_time=r["explicit_time"],
+        )
+
+
 def start_scheduler(bot):
-    """Запускает утренний цикл рассылки."""
+    """Запускает утренний цикл рассылки и восстанавливает напоминания."""
     asyncio.create_task(_morning_loop(bot))
+    asyncio.create_task(restore_reminders(bot))
     logger.info("Scheduler запущен")
