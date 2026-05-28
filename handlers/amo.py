@@ -65,8 +65,10 @@ CREATE_TRIGGERS = [
 ]
 
 MYTASKS_TRIGGERS = [
-    "мои задачи", "мои таски", "что у меня", "мой список задач",
-    "покажи мои задачи", "мои дела", "/mytasks",
+    "мои задачи crm", "мои задачи црм", "задачи crm", "задачи црм",
+    "задачи amocrm", "задачи амо", "amocrm задачи", "амо задачи",
+    "задачи из crm", "задачи из црм", "покажи задачи crm",
+    "мои дела crm", "мои дела црм", "/tasks", "/mytasks",
 ]
 
 CONTACT_SEARCH_TRIGGERS = [
@@ -554,6 +556,11 @@ async def callback_task_action(callback: CallbackQuery):
     from services.scheduler import handle_task_callback
     from bot_instance import bot
     await handle_task_callback(callback, bot)
+
+
+@router.message(Command("tasks"))
+async def cmd_tasks(message: Message):
+    await handle_mytasks(message)
 
 
 # ─── Главная точка входа (вызывается из text.py) ─────────────────────────────
