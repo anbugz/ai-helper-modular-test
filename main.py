@@ -36,6 +36,10 @@ async def main():
     dp.include_router(text.router)
     
     logger.info("Хэндлеры зарегистрированы. Запуск polling...")
+
+    # Запуск планировщика (утренняя рассылка)
+    from services.scheduler import start_scheduler
+    start_scheduler(bot)
     
     # Запуск бота
     await dp.start_polling(bot)
