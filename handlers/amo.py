@@ -279,7 +279,9 @@ async def handle_deal_number_search(message: Message, deal: dict):
             )
             if full.get("id"):
                 full["_active_tasks"] = await get_lead_tasks(full["id"])
-                text = format_lead_card(full, pipelines, users)
+                from services.amocrm import get_amo_user_id as _get_amo_id
+                _viewer_id = _get_amo_id(message.from_user.id)
+                text = format_lead_card(full, pipelines, users, viewer_amo_id=_viewer_id)
                 await message.answer(text, parse_mode="HTML")
                 return
 
@@ -312,7 +314,9 @@ async def handle_lead_search(message: Message, query: str):
             full = await _async_request("GET", f"/leads/{leads[0]['id']}", params={"with": "contacts,custom_fields"})
             if full.get("id"):
                 full["_active_tasks"] = await get_lead_tasks(full["id"])
-                text = format_lead_card(full, pipelines, users)
+                from services.amocrm import get_amo_user_id as _get_amo_id
+                _viewer_id = _get_amo_id(message.from_user.id)
+                text = format_lead_card(full, pipelines, users, viewer_amo_id=_viewer_id)
                 await message.answer(text, parse_mode="HTML")
                 return
 
