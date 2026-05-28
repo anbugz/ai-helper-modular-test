@@ -195,18 +195,29 @@ def format_lead_card(lead: dict, pipelines: dict, users: dict) -> str:
     if cf.get('gtd_number'):
         lines.append(f"🔖 ГТД: {cf['gtd_number']}")
 
-    # Чеклист по этапу
+    # Текущие задачи из AmoCRM
+    tasks = lead.get("_embedded", {}).get("tasks", [])
+    active_tasks = [t for t in tasks if not t.get("is_completed")]
+    if active_tasks:
+        lines.append("")
+        lines.append("📋 <b>Текущие задачи:</b>")
+        for t in active_tasks[:5]:
+            due_ts = t.get("complete_till")
+            due_str = ""
+            if due_ts:
+                from datetime import datetime
+                due_str = " — " + datetime.fromtimestamp(due_ts).strftime("%d.%m %H:%M")
+            lines.append(f"  • {t.get('text', '—')[:80]}{due_str}")
+
+    # Рекомендации по этапу
     checklist = get_stage_checklist(status_name, cf, deal_info)
     if checklist:
         lines.append("")
-        lines.append("📌 <b>Что делать сейчас:</b>")
+        lines.append("💡 <b>Рекомендации:</b>")
         for item in checklist:
             lines.append(f"  • {item}")
 
-    # Подсказка по задачам
-    if deal_info:
-        lines.append("")
-        lines.append(f"💡 <i>Задача по сделке: «напомни по {deal_info['full']} завтра в 10 [текст]»</i>")
+
 
     return '\n'.join(line for line in lines)
 
