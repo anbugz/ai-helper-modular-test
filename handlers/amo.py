@@ -299,7 +299,6 @@ async def _remind_later(chat_id: int, task_text: str, deal_name: str, delay: flo
 async def handle_task_create(message: Message, raw_text: str):
     """Создаёт задачу в AmoCRM. Если есть номер сделки — привязывает."""
     task_text, due_dt, deal_info, explicit_time = parse_task_datetime(raw_text)
-    await message.answer("⏳ Создаю задачу в AmoCRM...")
     try:
         from services.amocrm import get_amo_user_id, search_leads_by_number
         from services.scheduler import schedule_reminder
@@ -334,7 +333,6 @@ async def handle_task_create(message: Message, raw_text: str):
                 f"📝 {task_text}\n"
                 f"🕐 Срок: {due_str}"
                 f"{deal_str}\n"
-                f"🆔 ID: {task['id']}\n"
                 f"<i>{remind_note}</i>",
                 parse_mode="HTML"
             )
