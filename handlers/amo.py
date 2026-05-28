@@ -131,20 +131,26 @@ async def handle_mytasks(message: Message):
     now = datetime.now()
     today_end = now.replace(hour=23, minute=59, second=59)
     tomorrow_end = today_end + timedelta(days=1)
-    overdue, today_tasks, tomorrow_tasks, later_tasks = [], [], [], []
 
+    # Загружаем названия сделок
+    lead_cache = {}
+    for t in tasks:
+        eid = t.get("entity_id")
+        if eid and t.get("entity_type") == "leads" and eid not in lead_cache:
+            lr = await _async_request("GET", f"/leads/{eid}")
+            lead_cache[eid] = lr.get("name", "")
+
+    overdue, today_tasks, tomorrow_tasks, later_tasks = [], [], [], []
     for t in tasks:
         due_ts = t.get("complete_till", 0)
         due_dt = datetime.fromtimestamp(due_ts) if due_ts else None
-        entity_id = t.get("entity_id")
-        lead_name = ""
-        if entity_id and t.get("entity_type") == "leads":
-            lr = await _async_request("GET", f"/leads/{entity_id}")
-            lead_name = lr.get("name", "")
+        eid = t.get("entity_id")
         item = {
             "text": t.get("text", "—"),
             "due": due_dt.strftime("%d.%m %H:%M") if due_dt else "—",
-            "lead": lead_name,
+            "due_dt": due_dt,
+            "lead": lead_cache.get(eid, "") if eid else "",
+            "lead_id": eid,
         }
         if not due_dt:
             later_tasks.append(item)
@@ -157,22 +163,38 @@ async def handle_mytasks(message: Message):
         else:
             later_tasks.append(item)
 
-    def fmt(items):
+    def fmt(items, amo_domain=""):
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        order = []
+        for t in items[:15]:
+            key = (t["lead_id"], t["lead"] or "⚪ Без сделки")
+            if key not in order:
+                order.append(key)
+            grouped[key].append(t)
         lines = []
-        for t in items[:10]:
-            lead_str = f" <i>({t['lead'][:40]})</i>" if t["lead"] else ""
-            lines.append(f"  • {t['text'][:60]}{lead_str}\n    🕐 {t['due']}")
-        return "\n".join(lines)
+        for (lead_id, lead_name) in order:
+            if lead_id and lead_name != "⚪ Без сделки":
+                url = f"https://{amo_domain}/leads/detail/{lead_id}"
+                lines.append(f"\n🔗 <a href=\'{url}\'><b>{lead_name[:60]}</b></a>")
+            else:
+                lines.append(f"\n⚪ Без сделки")
+            for t in grouped[(lead_id, lead_name)]:
+                lines.append(f"  • {t['text'][:70]}\n    🕐 {t['due']}")
+        return "\n".join(lines).strip()
+
+    import os as _os
+    _domain = _os.getenv("AMO_DOMAIN", "westasia.amocrm.ru")
 
     parts = []
     if overdue:
-        parts.append(f"🔴 <b>Просроченные: {len(overdue)}</b>\n{fmt(overdue)}")
+        parts.append(f"🔴 <b>Просроченные: {len(overdue)}</b>{fmt(overdue, _domain)}")
     if today_tasks:
-        parts.append(f"🟡 <b>Сегодня: {len(today_tasks)}</b>\n{fmt(today_tasks)}")
+        parts.append(f"🟡 <b>Сегодня: {len(today_tasks)}</b>{fmt(today_tasks, _domain)}")
     if tomorrow_tasks:
-        parts.append(f"🔵 <b>Завтра: {len(tomorrow_tasks)}</b>\n{fmt(tomorrow_tasks)}")
+        parts.append(f"🔵 <b>Завтра: {len(tomorrow_tasks)}</b>{fmt(tomorrow_tasks, _domain)}")
     if later_tasks:
-        parts.append(f"⚪ <b>Позже: {len(later_tasks)}</b>\n{fmt(later_tasks)}")
+        parts.append(f"⚪ <b>Позже: {len(later_tasks)}</b>{fmt(later_tasks, _domain)}")
 
     await message.answer(
         f"📋 <b>Твои задачи ({len(tasks)}):</b>\n\n" + "\n\n".join(parts),
