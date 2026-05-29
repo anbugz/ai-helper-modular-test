@@ -190,6 +190,28 @@ def tfidf_search(query: str, top_n: int = 3, min_score: float = 0.05) -> List[Di
     }
 
     # Расширяем запрос: точное + префиксное совпадение
+    # Нормализация слитных слов: "авиаагенты" → "авиа агенты"
+    SPLIT_COMPOUNDS = [
+        ("авиаагент", "авиа агент"),
+        ("авиаэкспедит", "авиа экспедит"),
+        ("автоагент", "авто агент"),
+        ("автоэкспедит", "авто экспедит"),
+        ("автоперевозк", "авто перевозк"),
+        ("морскойагент", "морской агент"),
+        ("жделеагент", "жд агент"),
+        ("железнодорожн", "жд"),
+        ("авиадекларант", "авиа декларант"),
+        ("таможенныйброкер", "таможенный брокер"),
+    ]
+    query_normalized = query.lower()
+    for compound, replacement in SPLIT_COMPOUNDS:
+        if compound in query_normalized:
+            query_normalized = query_normalized.replace(compound, replacement)
+    # Также разбиваем CamelCase-подобные слова типа "авиаАгент"
+    import re as _re
+    query_normalized = _re.sub(r'(авиа|авто|море|морск|жд|авиа|железнодорож)(агент|экспедит|перевозч|доставк|брокер|партнёр|партнер)', r' ', query_normalized)
+    query = query_normalized
+
     base_tokens = _tokenize(query)
     expanded_tokens = list(base_tokens)
     for token in base_tokens:
