@@ -56,15 +56,24 @@ async def _morning_digest(bot):
                 text += "\n"
 
             if upcoming:
-                text += f"🟡 <b>Срок сегодня/завтра: {len(upcoming)}</b>\n"
-                for t in upcoming[:7]:
-                    entity_id = t.get("entity_id")
-                    lead_name = ""
-                    if entity_id and t.get("entity_type") == "leads":
-                        lr = await _async_request("GET", f"/leads/{entity_id}")
-                        lead_name = f" — {lr.get('name', '')}" if lr.get("name") else ""
-                    due_dt = datetime.fromtimestamp(t["complete_till"], tz=MSK)
-                    text += f"  • {t.get('text','—')[:60]}{lead_name}\n    🕐 Срок: {due_dt.strftime('%d.%m %H:%M')}\n"
+                # Загружаем названия сделок для всех upcoming задач
+                lead_cache = {}
+                for t in upcoming:
+                    eid = t.get("entity_id")
+                    if eid and t.get("entity_type") == "leads" and eid not in lead_cache:
+                        lr = await _async_request("GET", f"/leads/{eid}")
+                        lead_cache[eid] = lr.get("name", "")
+
+                # Фильтруем пустые задачи
+                upcoming_clean = [t for t in upcoming if t.get("text", "").strip()]
+                text += f"🟡 <b>Срок сегодня/завтра: {len(upcoming_clean)}</b>\n"
+                for t in upcoming_clean[:10]:
+                    task_text = t.get("text", "—").strip()[:70]
+                    eid = t.get("entity_id")
+                    lead_name = f" — {lead_cache[eid][:40]}" if eid and lead_cache.get(eid) else ""
+                    due_ts = t.get("complete_till", 0)
+                    due_str = datetime.fromtimestamp(due_ts, tz=MSK).strftime("%d.%m %H:%M") if due_ts else "—"
+                    text += f"  • {task_text}{lead_name}\n    🕐 {due_str}\n"
 
             await bot.send_message(tg_id, text, parse_mode="HTML")
             logger.info(f"Scheduler: рассылка отправлена → {tg_id}")
