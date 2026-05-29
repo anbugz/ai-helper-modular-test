@@ -35,8 +35,11 @@ FIELD_IDS = {
 # Паттерн: число + суффикс типа
 # Единицы измерения и стоп-слова — не считаем их номерами сделок
 _UNIT_SUFFIXES = {
-    "шт", "кг", "гр", "мм", "см", "км", "м", "л", "мл",
+    "шт", "кг", "гр", "мм", "см", "км", "л", "мл",  # "м" убрана — конфликт с типом сделки М (Море)
     "м2", "м3", "куб", "уп", "пар", "рул", "шт",
+    # Одиночная К — может быть частью "кг", "км" и т.д. — не номер сделки
+    # НЕ добавляем "к" чтобы не блокировать сделки типа 64К
+    "млн", "тыс", "eur", "usd", "cny",
 }
 
 DEAL_NUMBER_PATTERN = re.compile(
@@ -100,8 +103,22 @@ def parse_deal_number(text: str) -> Optional[dict]:
 
 
 def is_deal_number_request(text: str) -> bool:
-    """Проверяет содержит ли текст номер сделки."""
-    return bool(DEAL_NUMBER_PATTERN.search(text))
+    """Проверяет содержит ли текст номер сделки (исключая единицы измерения)."""
+    for match in DEAL_NUMBER_PATTERN.finditer(text):
+        number = match.group(1)
+        suffix = match.group(2).lower()
+        if _is_unit_match(number, suffix):
+            continue
+        # Дополнительная проверка: если перед числом стоит финансовое/физическое слово
+        # "вес 500к" — не сделка, но "найди сделку 73М" — сделка
+        start = match.start()
+        prefix = text[max(0, start-15):start].lower()
+        fin_words = ("вес ", "фрахт ", "инвойс ", "объём ", "объем ", "цена ", "сумм",
+                     "долларов ", "юаней ", "евро ", "рублей ", "usd ", "cny ", "eur ")
+        if any(w in prefix for w in fin_words):
+            continue
+        return True
+    return False
 
 
 # ─── Извлечение кастомных полей ──────────────────────────────────────────────
