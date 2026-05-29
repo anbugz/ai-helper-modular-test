@@ -375,7 +375,8 @@ def parse_task_datetime(text: str) -> tuple:
     explicit_time=True если пользователь назвал конкретное время или «через N минут/часов»
     """
     from services.amo_leads import parse_deal_number
-    now = datetime.now(_MSK).replace(tzinfo=None)  # МСК UTC+3 — рабочий ч/п West Asia
+    _MSK = _tz(timedelta(hours=3))  # МСК UTC+3
+    now = datetime.now(_MSK).replace(tzinfo=None)
     due = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     explicit_time = False  # по умолчанию — долгосрочная, напоминать за 30 мин
 
