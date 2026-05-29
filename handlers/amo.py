@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
 from config import logger, ADMIN_ID
 from services.amo_leads import parse_deal_number, is_deal_number_request, format_lead_card
@@ -530,6 +530,7 @@ async def handle_task_create(message: Message, raw_text: str):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
+@router.message(Command("overdue"))
 async def cmd_overdue(message: Message):
     await message.answer("⏳ Загружаю просроченные задачи...")
     try:
