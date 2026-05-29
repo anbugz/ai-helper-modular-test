@@ -73,7 +73,7 @@ async def _morning_digest(bot):
                     lead_name = f" — {lead_cache[eid][:40]}" if eid and lead_cache.get(eid) else ""
                     due_ts = t.get("complete_till", 0)
                     due_str = datetime.fromtimestamp(due_ts, tz=MSK).strftime("%d.%m %H:%M") if due_ts else "—"
-                    text += f"  • {task_text}{lead_name}\n    🕐 {due_str}\n"
+                    text += f"  • <b>{lead_cache.get(eid, '')[:40]}</b>\n    {task_text}\n    🕐 {due_str}\n" if eid and lead_cache.get(eid) else f"  • {task_text}\n    🕐 {due_str}\n"
 
             await bot.send_message(tg_id, text, parse_mode="HTML")
             logger.info(f"Scheduler: рассылка отправлена → {tg_id}")
