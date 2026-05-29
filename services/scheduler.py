@@ -67,16 +67,22 @@ async def _morning_digest(bot):
                 # Фильтруем пустые задачи
                 upcoming_clean = [t for t in upcoming if t.get("text", "").strip()]
                 text += f"🟡 <b>Срок сегодня/завтра: {len(upcoming_clean)}</b>\n"
-                for t in upcoming_clean[:10]:
+                for t in upcoming_clean[:20]:
                     task_text = t.get("text", "—").strip()[:100]
                     eid = t.get("entity_id")
                     lead_name = lead_cache.get(eid, "")[:50] if eid else ""
                     due_ts = t.get("complete_till", 0)
-                    due_str = datetime.fromtimestamp(due_ts, tz=MSK).strftime("%d.%m %H:%M") if due_ts else "—"
-                    if lead_name:
-                        text += f"\n  📋 <b>{lead_name}</b>\n    {task_text}\n    🕐 {due_str}\n"
+                    due_dt = datetime.fromtimestamp(due_ts, tz=MSK) if due_ts else None
+                    # Показываем время только если конкретное (не 23:59)
+                    if due_dt and (due_dt.hour != 23 or due_dt.minute != 59):
+                        due_str = f"🕐 {due_dt.strftime('%d.%m %H:%M')}"
                     else:
-                        text += f"\n  • {task_text}\n    🕐 {due_str}\n"
+                        due_str = ""
+                    time_line = f"\n    {due_str}" if due_str else ""
+                    if lead_name:
+                        text += f"\n  📋 <b>{lead_name}</b>\n    {task_text}{time_line}\n"
+                    else:
+                        text += f"\n  • {task_text}{time_line}\n"
 
             await bot.send_message(tg_id, text, parse_mode="HTML")
             logger.info(f"Scheduler: рассылка отправлена → {tg_id}")
