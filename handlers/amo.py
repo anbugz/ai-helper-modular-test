@@ -383,6 +383,9 @@ def parse_task_datetime(text: str) -> tuple:
     for tr in TASK_TRIGGERS:
         text = re.sub(tr, "", text, flags=re.IGNORECASE).strip()
 
+    # Убираем "по сделке", "для сделки" и т.д. перед поиском номера
+    text = re.sub(r"\b(по|для|к|в|на)\s+сделк\w*\s*", " ", text, flags=re.IGNORECASE).strip()
+
     # Ищем номер сделки (64К, 73М и т.д.)
     deal_info = parse_deal_number(text)
     if deal_info:
@@ -394,7 +397,57 @@ def parse_task_datetime(text: str) -> tuple:
         explicit_time = True
         text = text[:time_match.start()] + text[time_match.end():]
 
-    # Ищем день
+    # ─── Конкретные даты: "1 июня", "01.06", "01.06.2026" ───────────────────────
+    MONTHS_RU = {
+        "январ": 1, "феврал": 2, "март": 3, "апрел": 4,
+        "май": 5, "мая": 5, "июн": 6, "июл": 7, "август": 8,
+        "сентябр": 9, "октябр": 10, "ноябр": 11, "декабр": 12,
+    }
+    # "1 июня", "15 июля", "первого июня"
+    date_word_match = re.search(
+        r"(\d{1,2})\s+(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)",
+        text, re.IGNORECASE
+    )
+    # "01.06", "01.06.2026", "1.6.26"
+    date_num_match = re.search(
+        r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?",
+        text
+    ) if not date_word_match else None
+
+    if date_word_match:
+        day = int(date_word_match.group(1))
+        month_str = date_word_match.group(2).lower()[:6]
+        month = next((v for k, v in MONTHS_RU.items() if month_str.startswith(k[:4])), None)
+        if month:
+            year = now.year
+            try:
+                candidate = now.replace(year=year, month=month, day=day, hour=10, minute=0, second=0, microsecond=0)
+                if candidate < now:
+                    candidate = candidate.replace(year=year + 1)
+                due = candidate
+            except ValueError:
+                pass
+        text = text[:date_word_match.start()] + text[date_word_match.end():]
+    elif date_num_match:
+        try:
+            day = int(date_num_match.group(1))
+            month = int(date_num_match.group(2))
+            year_raw = date_num_match.group(3)
+            year = now.year
+            if year_raw:
+                year = int(year_raw)
+                if year < 100:
+                    year += 2000
+            if 1 <= day <= 31 and 1 <= month <= 12:
+                candidate = now.replace(year=year, month=month, day=day, hour=10, minute=0, second=0, microsecond=0)
+                if candidate < now:
+                    candidate = candidate.replace(year=year + 1)
+                due = candidate
+                text = text[:date_num_match.start()] + text[date_num_match.end():]
+        except (ValueError, AttributeError):
+            pass
+
+    # ─── Ищем день ────────────────────────────────────────────────────────────
     if "послезавтра" in text.lower():
         due = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
         text = re.sub(r"послезавтра", "", text, flags=re.IGNORECASE)
