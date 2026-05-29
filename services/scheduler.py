@@ -72,8 +72,16 @@ async def _morning_digest(bot):
                     if not due_ts:
                         return False
                     dt = datetime.fromtimestamp(due_ts, tz=MSK)
-                    return not (dt.hour == 23 and dt.minute == 59)
-                upcoming_clean = sorted(upcoming_clean, key=lambda t: (0 if _has_specific_time(t) else 1, t.get("complete_till", 0)))
+                    # AmoCRM "Весь день" = полночь UTC = 02:59-03:01 МСК
+                    # Конкретное время = всё остальное
+                    if dt.hour == 23 and dt.minute == 59:
+                        return False
+                    if dt.hour == 2 and dt.minute == 59:
+                        return False
+                    if dt.hour == 3 and dt.minute == 0:
+                        return False
+                    return True
+                upcoming_clean = sorted(upcoming_clean, key=lambda t: (0 if _has_specific_time(t) else 1, t.get("complete_till", 0) if _has_specific_time(t) else 9999999999))
                 text += f"🟡 <b>Срок сегодня/завтра: {len(upcoming_clean)}</b>\n"
                 for t in upcoming_clean[:20]:
                     task_text = t.get("text", "—").strip()[:100]
