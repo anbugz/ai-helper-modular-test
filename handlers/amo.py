@@ -448,6 +448,26 @@ def parse_task_datetime(text: str) -> tuple:
         except (ValueError, AttributeError):
             pass
 
+    # ─── Дни недели: "в понедельник", "на среду" ─────────────────────────────
+    WEEKDAYS = {
+        "понедельник": 0, "вторник": 1, "среду": 2, "среда": 2,
+        "четверг": 3, "пятницу": 4, "пятница": 4,
+        "субботу": 5, "суббота": 5, "воскресенье": 6, "воскресенье": 6,
+    }
+    weekday_match = re.search(
+        r"(в|на)\s+(понедельник|вторник|среду?|четверг|пятниц[ауы]?|суббот[ауы]?|воскресень[ею]?)",
+        text, re.IGNORECASE
+    )
+    if weekday_match:
+        day_str = weekday_match.group(2).lower()
+        target_wd = next((v for k, v in WEEKDAYS.items() if day_str.startswith(k[:5])), None)
+        if target_wd is not None:
+            days_ahead = (target_wd - now.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7  # Если сегодня тот же день — следующий
+            due = (now + timedelta(days=days_ahead)).replace(hour=10, minute=0, second=0, microsecond=0)
+        text = text[:weekday_match.start()] + text[weekday_match.end():]
+
     # ─── Ищем день ────────────────────────────────────────────────────────────
     if "послезавтра" in text.lower():
         due = (now + timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0)
