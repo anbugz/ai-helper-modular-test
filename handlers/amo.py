@@ -10,7 +10,7 @@ handlers/amo.py — команды для работы с AmoCRM.
 """
 import re
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as _tz
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
