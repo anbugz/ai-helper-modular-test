@@ -66,6 +66,14 @@ async def _morning_digest(bot):
 
                 # Фильтруем пустые задачи
                 upcoming_clean = [t for t in upcoming if t.get("text", "").strip()]
+                # Сортируем: сначала с конкретным временем (не 23:59), потом остальные
+                def _has_specific_time(t):
+                    due_ts = t.get("complete_till", 0)
+                    if not due_ts:
+                        return False
+                    dt = datetime.fromtimestamp(due_ts, tz=MSK)
+                    return not (dt.hour == 23 and dt.minute == 59)
+                upcoming_clean = sorted(upcoming_clean, key=lambda t: (0 if _has_specific_time(t) else 1, t.get("complete_till", 0)))
                 text += f"🟡 <b>Срок сегодня/завтра: {len(upcoming_clean)}</b>\n"
                 for t in upcoming_clean[:20]:
                     task_text = t.get("text", "—").strip()[:100]
