@@ -53,7 +53,7 @@ TASK_TRIGGERS = [
     "задач перезвон", "задач позвон", "задач провер",
     "сделай задач", "создай напоминание", "поставь напоминание",
     "добавь напоминание", "нужно позвонить", "надо позвонить",
-    # "перезвонить через", "позвонить через",  # убраны — ломают парсинг времени
+    "перезвонить через", "позвонить через",
 ]
 
 NOTE_TRIGGERS = [
@@ -814,6 +814,7 @@ async def handle_lead_create(message: Message, raw_text: str):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
 
 
+@router.callback_query(lambda c: c.data and (c.data.startswith("task_done:") or c.data.startswith("task_postpone:")))
 async def callback_task_action(callback: CallbackQuery):
     from services.scheduler import handle_task_callback
     from bot_instance import bot
