@@ -174,7 +174,8 @@ def schedule_reminder(
     if task_id in _scheduled:
         _scheduled[task_id].cancel()
 
-    now = datetime.now()
+    _MSK = timezone(timedelta(hours=3))
+    now = datetime.now(_MSK).replace(tzinfo=None)
 
     if explicit_time:
         remind_at = due_dt
