@@ -532,7 +532,7 @@ def parse_task_datetime(text: str) -> tuple:
         text = text[:single_match.start()] + text[single_match.end():]
 
     time_delta_match = None if single_match else re.search(
-        r"через\s+(\d+|одну?|один|дв[уе]|три|четыр\w*|пять|десять|пятнадц\w*|двадц\w*|полчас\w*)\s*(минут\w*|мин|час\w*|ч|дн\w*|день|дней|недел\w*)",
+        r"через\s+(\d+|одну?|один|дв\w*|три|четыр\w*|пять\w*|шест\w*|сем\w*|восем\w*|девят\w*|десять|пятнадц\w*|двадц\w*|тридц\w*|полчас\w*)\s*(минут\w*|мин|час\w*|ч|дн\w*|день|дней|недел\w*)",
         text, re.IGNORECASE
     )
     if time_delta_match:
