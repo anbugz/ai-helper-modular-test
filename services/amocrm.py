@@ -328,7 +328,7 @@ async def create_task(
     task_type_id = 1  # Позвонить (стандартный тип)
     payload = {
         "text": text,
-        "complete_till": int(due_dt.timestamp()),
+        "complete_till": int((due_dt - timedelta(hours=3)).timestamp()),  # due_dt в МСК → UTC
         "task_type_id": task_type_id,
     }
     if entity_id:
