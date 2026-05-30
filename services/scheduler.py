@@ -216,11 +216,20 @@ async def handle_task_callback(callback, bot):
     try:
         if data.startswith("task_done:"):
             task_id = int(data.split(":")[1])
+            # Проверяем что задача ещё существует
+            check = await _async_request("GET", f"/tasks/{task_id}")
+            if check.get("error") or not check.get("id"):
+                await callback.message.edit_text(
+                    callback.message.text + "\n\n⚠️ <b>Задача не найдена в CRM — возможно уже удалена.</b>",
+                    parse_mode="HTML", reply_markup=None,
+                )
+                await callback.answer("Задача не найдена в CRM")
+                return
+
             await _async_request("PATCH", f"/tasks/{task_id}", data={"is_completed": True})
             await callback.message.edit_text(
                 callback.message.text + "\n\n✅ <b>Задача выполнена!</b>",
-                parse_mode="HTML",
-                reply_markup=None,
+                parse_mode="HTML", reply_markup=None,
             )
             await callback.answer("Задача закрыта ✅")
 
@@ -228,17 +237,29 @@ async def handle_task_callback(callback, bot):
             parts = data.split(":")
             task_id = int(parts[1])
             days = int(parts[2])
+
             # Получаем текущий срок задачи
             resp = await _async_request("GET", f"/tasks/{task_id}")
+            if resp.get("error") or not resp.get("id"):
+                await callback.message.edit_text(
+                    callback.message.text + "\n\n⚠️ <b>Задача не найдена в CRM — возможно уже удалена.</b>",
+                    parse_mode="HTML", reply_markup=None,
+                )
+                await callback.answer("Задача не найдена в CRM")
+                return
+
             current_till = resp.get("complete_till", 0)
+            if not current_till:
+                # Если срок не установлен — берём текущее время
+                current_till = int(datetime.now().timestamp())
+
             new_till = current_till + days * 86400
             await _async_request("PATCH", f"/tasks/{task_id}", data={"complete_till": new_till})
             new_dt_obj = datetime.fromtimestamp(new_till)
             new_dt_str = new_dt_obj.strftime("%d.%m.%Y %H:%M")
             await callback.message.edit_text(
                 callback.message.text + f"\n\n📅 <b>Перенесено на {new_dt_str}</b>",
-                parse_mode="HTML",
-                reply_markup=None,
+                parse_mode="HTML", reply_markup=None,
             )
             await callback.answer(f"Перенесено на {days} дн. ✅")
             # Планируем новое напоминание за 30 минут до нового срока
