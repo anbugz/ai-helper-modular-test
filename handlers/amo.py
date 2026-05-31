@@ -847,6 +847,10 @@ async def handle_amo_request(message: Message, user_text: str):
             return
         await handle_lead_search(message, query)
 
+    # Создание задачи — проверяем ДО поиска контактов (иначе "клиент" триггерит контакт)
+    elif _has_task_intent(user_text):
+        await handle_task_create(message, user_text)
+
     # Поиск контактов/компаний
     elif any(tr in text_lower for tr in CONTACT_TRIGGERS):
         query = user_text
@@ -856,10 +860,6 @@ async def handle_amo_request(message: Message, user_text: str):
             await message.answer("Укажи что искать. Например: «реквизиты ООО Ромашка»")
             return
         await handle_contact_search(message, query)
-
-    # Создание задачи
-    elif _has_task_intent(user_text):
-        await handle_task_create(message, user_text)
 
     # Мои задачи
     elif any(tr in text_lower for tr in MYTASKS_TRIGGERS):
