@@ -453,12 +453,17 @@ async def handle_card_text_if_in_state(message: Message):
     return True
 
 
-@router.message(F.document | F.photo)
+def _in_contract_state(message: Message) -> bool:
+    state = CONTRACT_STATE.get(message.from_user.id)
+    return bool(state and state.get('step') == 'wait_card')
+
+
+@router.message((F.document | F.photo), _in_contract_state)
 async def handle_contract_file(message: Message):
     user_id = message.from_user.id
     state = CONTRACT_STATE.get(user_id)
     if not state or state.get('step') != 'wait_card':
-        return  # Не в режиме договора — пропускаем совсем
+        return
 
     status = await message.answer("⏳ Обрабатываю файл...")
     tmp_path = None
