@@ -87,8 +87,14 @@ def build_messages(
     """
     from config import SYSTEM_PROMPT, MAX_HISTORY
     from database import get_dialog_history
+    from datetime import datetime as _dt
+    _now = _dt.now()
+    _months = {1:"января",2:"февраля",3:"марта",4:"апреля",5:"мая",6:"июня",
+               7:"июля",8:"августа",9:"сентября",10:"октября",11:"ноября",12:"декабря"}
+    _date_str = f"{_now.day} {_months[_now.month]} {_now.year} года"
+    _system_with_date = SYSTEM_PROMPT + f" Сегодня {_date_str}."
 
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    msgs = [{"role": "system", "content": _system_with_date}]
 
     if include_history:
         # Инструкция про контекст диалога — LLM сама решает, продолжение это или новый запрос
