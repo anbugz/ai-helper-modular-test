@@ -266,7 +266,12 @@ async def handle_type_selection(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.document | F.photo)
+def _in_doccheck_state(message: Message) -> bool:
+    state = CHECK_STATE.get(message.from_user.id)
+    return bool(state and state.get("step") == "wait_file")
+
+
+@router.message((F.document | F.photo), _in_doccheck_state)
 async def handle_check_file(message: Message):
     """Обрабатывает файл в режиме проверки документа."""
     user_id = message.from_user.id
