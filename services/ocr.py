@@ -1,37 +1,83 @@
 """
-services/ocr.py — единый модуль извлечения текста из файлов.
+services/ocr.py — Универсальное извлечение текста из файлов и изображений.
 
-Поддерживаемые форматы:
-  .pdf              → pdfplumber → PyPDF2 (fallback)
-  .docx             → python-docx
-  .xlsx / .xls      → openpyxl
-  .txt              → plain text
-  .jpg/.jpeg/.png/.webp/.bmp/.tiff → DeepSeek Vision (base64)
-
-Использование:
-    from services.ocr import extract_text
-
-    text = await extract_text(file_path)   # для async контекста
-    text = extract_text_sync(file_path)    # для sync контекста
+Поддерживает:
+- PDF       → pdfplumber (текстовый) или PyPDF2 (fallback)
+- DOCX      → python-docx
+- XLSX/XLS  → openpyxl
+- TXT       → напрямую
+- JPG/PNG/WEBP/TIFF → DeepSeek Vision (base64)
+- Сканы PDF → DeepSeek Vision (конвертация страниц в изображения)
 """
 
 import os
+import io
 import base64
 import asyncio
 import logging
+import tempfile
+
 import httpx
 from config import DEEPSEEK_API_KEY, logger
 
-# ─── Константы ────────────────────────────────────────────────────────────────
+# ─── DeepSeek Vision ──────────────────────────────────────────────────────────
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
-TEXT_EXTENSIONS   = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt"}
-
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 _TIMEOUT = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
 
-# ─── Синхронные извлекатели ───────────────────────────────────────────────────
+VISION_PROMPT = """Извлеки весь текст с изображения дословно, сохраняя структуру.
+Если это таблица — сохрани колонки через | (пайп).
+Если текст на английском — оставь на английском.
+Если текст на русском — оставь на русском.
+Верни только текст, без комментариев."""
 
-def _extract_pdf(path: str) -> str:
+
+async def image_to_text(image_bytes: bytes, mime: str = "image/jpeg") -> str:
+    """Отправляет изображение в DeepSeek Vision и возвращает извлечённый текст."""
+    if not DEEPSEEK_API_KEY:
+        return ""
+
+    b64 = base64.b64encode(image_bytes).decode()
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"}
+                },
+                {
+                    "type": "text",
+                    "text": VISION_PROMPT
+                }
+            ]
+        }],
+        "temperature": 0,
+        "max_tokens": 4000,
+    }
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        limits = httpx.Limits(max_keepalive_connections=0, max_connections=10)
+        async with httpx.AsyncClient(timeout=_TIMEOUT, limits=limits) as client:
+            resp = await client.post(DEEPSEEK_URL, json=payload, headers=headers)
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"].get("content", "")
+        else:
+            logger.error(f"[OCR] DeepSeek Vision HTTP {resp.status_code}: {resp.text[:200]}")
+            return ""
+    except Exception as e:
+        logger.error(f"[OCR] DeepSeek Vision error: {e}")
+        return ""
+
+
+# ─── Синхронные утилиты извлечения текста ────────────────────────────────────
+
+def _extract_pdf_text(path: str) -> str:
+    """Извлекает текст из PDF (только текстовые PDF, не сканы)."""
     text = ""
     try:
         import pdfplumber
@@ -40,27 +86,20 @@ def _extract_pdf(path: str) -> str:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
-        if text.strip():
-            return text
-    except Exception as e:
-        logger.debug(f"pdfplumber failed: {e}")
-
-    # Fallback: PyPDF2
-    try:
-        import PyPDF2
-        with open(path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            for page in reader.pages:
-                t = page.extract_text()
-                if t:
-                    text += t + "\n"
-    except Exception as e:
-        logger.debug(f"PyPDF2 failed: {e}")
-
-    return text
+    except Exception:
+        try:
+            import PyPDF2
+            with open(path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                for page in reader.pages:
+                    text += page.extract_text() or ""
+        except Exception as e:
+            logger.error(f"[OCR] PDF text extract error: {e}")
+    return text.strip()
 
 
-def _extract_docx(path: str) -> str:
+def _extract_docx_text(path: str) -> str:
+    """Извлекает текст из DOCX."""
     try:
         from docx import Document
         doc = Document(path)
@@ -72,11 +111,12 @@ def _extract_docx(path: str) -> str:
                     lines.append(" | ".join(cells))
         return "\n".join(lines)
     except Exception as e:
-        logger.error(f"DOCX extract error: {e}")
+        logger.error(f"[OCR] DOCX extract error: {e}")
         return ""
 
 
-def _extract_xlsx(path: str) -> str:
+def _extract_xlsx_text(path: str) -> str:
+    """Извлекает текст из XLSX/XLS."""
     try:
         import openpyxl
         wb = openpyxl.load_workbook(path, data_only=True)
@@ -88,169 +128,109 @@ def _extract_xlsx(path: str) -> str:
                     lines.append(" | ".join(cells))
         return "\n".join(lines)
     except Exception as e:
-        logger.error(f"XLSX extract error: {e}")
+        logger.error(f"[OCR] XLSX extract error: {e}")
         return ""
 
 
-def _extract_txt(path: str) -> str:
-    for enc in ("utf-8", "cp1251", "latin-1"):
-        try:
-            with open(path, encoding=enc) as f:
-                return f.read()
-        except UnicodeDecodeError:
-            continue
-    return ""
-
-
-def extract_text_sync(path: str) -> str:
-    """Синхронное извлечение текста — только для текстовых форматов."""
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".pdf":
-        return _extract_pdf(path)
-    elif ext in (".docx", ".doc"):
-        return _extract_docx(path)
-    elif ext in (".xlsx", ".xls"):
-        return _extract_xlsx(path)
-    elif ext == ".txt":
-        return _extract_txt(path)
-    else:
-        return ""  # изображения — только через async extract_text
-
-
-# ─── DeepSeek Vision ──────────────────────────────────────────────────────────
-
-async def _extract_image_via_vision(path: str) -> str:
-    """
-    Отправляет изображение в DeepSeek Vision и извлекает весь текст.
-    Использует deepseek-chat с vision capabilities (multimodal).
-    """
-    if not DEEPSEEK_API_KEY:
-        return ""
-
-    ext = os.path.splitext(path)[1].lower().lstrip(".")
-    mime_map = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "png": "image/png", "webp": "image/webp",
-        "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff",
-    }
-    mime = mime_map.get(ext, "image/jpeg")
-
+def _pdf_to_images(path: str) -> list[bytes]:
+    """Конвертирует страницы PDF в изображения (для сканов)."""
+    images = []
     try:
-        with open(path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode()
+        import fitz  # pymupdf
+        doc = fitz.open(path)
+        for page in doc:
+            pix = page.get_pixmap(dpi=150)
+            images.append(pix.tobytes("jpeg"))
+        doc.close()
+    except ImportError:
+        logger.warning("[OCR] pymupdf не установлен — сканы PDF не поддерживаются")
     except Exception as e:
-        logger.error(f"Image read error: {e}")
-        return ""
-
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime};base64,{img_b64}"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Извлеки весь текст с изображения дословно. "
-                            "Сохрани структуру: таблицы — через |, строки — через новую строку. "
-                            "Не добавляй комментариев, только текст документа."
-                        )
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 4000,
-    }
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    try:
-        limits = httpx.Limits(max_keepalive_connections=0, max_connections=10)
-        async with httpx.AsyncClient(timeout=_TIMEOUT, limits=limits) as client:
-            resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-        if resp.status_code != 200:
-            logger.error(f"DeepSeek Vision HTTP {resp.status_code}: {resp.text[:300]}")
-            return ""
-        data = resp.json()
-        return data["choices"][0]["message"].get("content", "")
-    except httpx.ReadTimeout:
-        logger.error("DeepSeek Vision read timeout")
-        return ""
-    except Exception as e:
-        logger.error(f"DeepSeek Vision error: {e}")
-        return ""
+        logger.error(f"[OCR] PDF to images error: {e}")
+    return images
 
 
-# ─── Основная функция ─────────────────────────────────────────────────────────
+def _is_scanned_pdf(path: str) -> bool:
+    """Проверяет является ли PDF сканом (нет извлекаемого текста)."""
+    text = _extract_pdf_text(path)
+    return len(text.strip()) < 50
+
+
+# ─── Главная функция ──────────────────────────────────────────────────────────
 
 async def extract_text(path: str) -> str:
     """
-    Главная функция — извлекает текст из любого поддерживаемого файла.
+    Универсальное извлечение текста из файла.
 
-    Для текстовых форматов — синхронно в thread pool.
-    Для изображений — через DeepSeek Vision.
+    Порядок обработки:
+    - .txt               → читаем напрямую
+    - .docx              → python-docx
+    - .xlsx/.xls         → openpyxl
+    - .pdf (текстовый)   → pdfplumber
+    - .pdf (скан)        → конвертируем в изображения → DeepSeek Vision
+    - .jpg/.png/.webp    → DeepSeek Vision
 
-    Returns:
-        Извлечённый текст или "" если не удалось.
+    Возвращает извлечённый текст или пустую строку.
     """
     ext = os.path.splitext(path)[1].lower()
 
-    if ext in IMAGE_EXTENSIONS:
-        logger.info(f"[OCR] image → DeepSeek Vision: {os.path.basename(path)}")
-        return await _extract_image_via_vision(path)
+    # Текстовые форматы
+    if ext == ".txt":
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"[OCR] TXT read error: {e}")
+            return ""
 
-    if ext in TEXT_EXTENSIONS:
-        logger.info(f"[OCR] text extract: {os.path.basename(path)}")
-        text = await asyncio.to_thread(extract_text_sync, path)
-        # Если PDF оказался сканом (пустой текст) — пробуем Vision
-        if not text.strip() and ext == ".pdf":
-            logger.info(f"[OCR] PDF has no text layer, trying Vision: {os.path.basename(path)}")
-            # Конвертируем первые страницы PDF в изображение если возможно
-            text = await _pdf_via_vision(path)
-        return text
+    if ext == ".docx":
+        return await asyncio.to_thread(_extract_docx_text, path)
 
-    logger.warning(f"[OCR] unsupported format: {ext}")
+    if ext in (".xlsx", ".xls"):
+        return await asyncio.to_thread(_extract_xlsx_text, path)
+
+    # PDF
+    if ext == ".pdf":
+        text = await asyncio.to_thread(_extract_pdf_text, path)
+        if len(text.strip()) >= 50:
+            return text
+        # Скан — пробуем Vision
+        logger.info("[OCR] PDF кажется сканом — пробуем DeepSeek Vision")
+        images = await asyncio.to_thread(_pdf_to_images, path)
+        if not images:
+            return text  # возвращаем что есть даже если мало
+        # Берём первые 3 страницы чтобы не перегружать API
+        texts = []
+        for img_bytes in images[:3]:
+            t = await image_to_text(img_bytes, "image/jpeg")
+            if t:
+                texts.append(t)
+        return "\n\n".join(texts)
+
+    # Изображения
+    mime_map = {
+        ".jpg":  "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png":  "image/png",
+        ".webp": "image/webp",
+        ".tiff": "image/tiff",
+        ".tif":  "image/tiff",
+    }
+    if ext in mime_map:
+        with open(path, "rb") as f:
+            image_bytes = f.read()
+        return await image_to_text(image_bytes, mime_map[ext])
+
+    logger.warning(f"[OCR] Неизвестный формат: {ext}")
     return ""
 
 
-async def _pdf_via_vision(path: str) -> str:
-    """
-    Fallback для PDF-сканов: конвертирует страницы в PNG и отправляет в Vision.
-    Требует pdf2image + poppler.
-    """
+async def extract_text_bytes(file_bytes: bytes, ext: str) -> str:
+    """Извлекает текст из байтов файла (без сохранения на диск для простых форматов)."""
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
     try:
-        from pdf2image import convert_from_path
-        images = await asyncio.to_thread(
-            convert_from_path, path, dpi=200, first_page=1, last_page=3
-        )
-    except Exception as e:
-        logger.debug(f"pdf2image not available: {e}")
-        return ""
-
-    import tempfile
-    texts = []
-    for img in images:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp_path = tmp.name
-        try:
-            await asyncio.to_thread(img.save, tmp_path, "PNG")
-            t = await _extract_image_via_vision(tmp_path)
-            if t.strip():
-                texts.append(t)
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
-    return "\n\n".join(texts)
+        return await extract_text(tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
