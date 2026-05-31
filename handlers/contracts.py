@@ -183,64 +183,6 @@ async def get_contract_number(prefix: str, contract_key: str) -> str:
         return f"{base}-{num}"
 
 
-# ─── Извлечение текста из файлов ─────────────────────────────────────────────
-def extract_text_docx(path: str) -> str:
-    try:
-        from docx import Document as DocxDocument
-        doc = DocxDocument(path)
-        lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    if cell.text.strip():
-                        lines.append(cell.text.strip())
-        return '\n'.join(lines)
-    except Exception as e:
-        logger.error(f"DOCX extract error: {e}")
-        return ""
-
-
-def extract_text_pdf(path: str) -> str:
-    text = ''
-    try:
-        import pdfplumber
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    text += t + '\n'
-    except Exception:
-        try:
-            import PyPDF2
-            with open(path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    text += page.extract_text() or ''
-        except Exception:
-            pass
-    return text
-
-
-def extract_text_from_file(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower()
-    if ext == '.docx':
-        return extract_text_docx(path)
-    elif ext == '.pdf':
-        return extract_text_pdf(path)
-    elif ext in ('.xlsx', '.xls'):
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(path, data_only=True)
-            lines = []
-            for sheet in wb.worksheets:
-                for row in sheet.iter_rows(values_only=True):
-                    row_text = [str(c) for c in row if c]
-                    if row_text:
-                        lines.append(' | '.join(row_text))
-            return '\n'.join(lines)
-        except Exception as e:
-            logger.error(f"XLSX extract error: {e}")
-            return ""
     return ""
 
 
@@ -537,7 +479,8 @@ async def handle_contract_file(message: Message):
             await bot.download_file(file_obj.file_path, destination=tmp_path)
 
         await status.edit_text("⏳ Извлекаю текст из файла...")
-        raw_text = await asyncio.to_thread(extract_text_from_file, tmp_path)
+        from services.ocr import extract_text as ocr_extract
+        raw_text = await ocr_extract(tmp_path)
 
         if not raw_text or len(raw_text.strip()) < 20:
             await status.edit_text("❌ Не удалось извлечь текст. Попробуй другой формат или отправь текстом.")
