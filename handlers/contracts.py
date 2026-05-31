@@ -21,6 +21,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 
 from config import ADMIN_ID, logger
 from services.ai import ask_deepseek
+from services.ocr import extract_text
 
 router = Router()
 
@@ -182,8 +183,6 @@ async def get_contract_number(prefix: str, contract_key: str) -> str:
             json.dump(counters, f, ensure_ascii=False, indent=2)
         return f"{base}-{num}"
 
-
-    return ""
 
 
 # ─── AI извлечение реквизитов ────────────────────────────────────────────────
@@ -479,8 +478,7 @@ async def handle_contract_file(message: Message):
             await bot.download_file(file_obj.file_path, destination=tmp_path)
 
         await status.edit_text("⏳ Извлекаю текст из файла...")
-        from services.ocr import extract_text as ocr_extract
-        raw_text = await ocr_extract(tmp_path)
+        raw_text = await extract_text(tmp_path)
 
         if not raw_text or len(raw_text.strip()) < 20:
             await status.edit_text("❌ Не удалось извлечь текст. Попробуй другой формат или отправь текстом.")
