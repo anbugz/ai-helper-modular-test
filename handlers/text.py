@@ -320,6 +320,13 @@ async def handle_text(message: Message):
         )
         return
 
+    # === ПРОВЕРКА ДОКУМЕНТОВ ===
+    from handlers.doc_check import is_check_request, start_check_flow, detect_doc_type, CHECK_STATE
+    if is_check_request(user_text) and user_id not in CHECK_STATE:
+        doc_type = detect_doc_type(user_text)
+        await start_check_flow(message, doc_type)
+        return
+
     # === ДОГОВОРЫ — проверяем до всех остальных сценариев ===
     from handlers.contracts import is_contract_request, start_contract_flow, CONTRACT_STATE, handle_card_text_if_in_state
     if is_contract_request(user_text) and user_id not in CONTRACT_STATE:
